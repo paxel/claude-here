@@ -11,4 +11,5 @@ Initial release.
 * Image chain `base` / `rust` / `jvm` with global and per-project user Dockerfile layers, hash-based rebuilds, `update`.
 * Per-session network capture inside the container with `tshark` summaries; `net last|show|top|grep|shark|list|prune`.
 * TOML configuration (global < project < CLI), `config show|set|path`, `--save`.
-* `init`, `build`, `completions`, `uninstall`.
+* `init`, `build`, `completions` (fish/bash/zsh, installed for fish by `init`), `uninstall`.
+* Release workflow producing Linux (musl) and macOS tarballs, `install.sh`, Homebrew formula template.

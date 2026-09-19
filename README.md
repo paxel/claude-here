@@ -46,7 +46,15 @@ user in the `docker` group, Claude Code installed on the host for the one-time
 `claude setup-token`.
 
 ```
+# prebuilt binary (Linux x86_64/aarch64, macOS arm64/x86_64) into ~/.local/bin
+curl -fsSL https://github.com/paxel/claude-here/releases/latest/download/install.sh | sh
+
+# or Homebrew
+brew tap paxel/tap && brew install claude-here
+
+# or from source
 cargo install --git https://github.com/paxel/claude-here
+
 claude_here init
 ```
 
@@ -55,9 +63,6 @@ home), runs `claude setup-token`, seeds the container home from your host
 `~/.claude` (`settings.json`, `CLAUDE.md`, `skills/`, `commands/`, `plugins/`),
 installs fish completions and offers to add `.claude_here/` to your global git
 ignore. The first `claude_here` builds the `base` image locally (a few minutes).
-
-Prebuilt binaries, `install.sh` and a Homebrew formula are on the roadmap
-(see `CHANGELOG.md`).
 
 ## Usage
 

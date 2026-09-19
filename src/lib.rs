@@ -260,7 +260,9 @@ fn net_command(paths: &HostPaths, action: NetAction) -> Result<()> {
 
 /// Shell completion script for one of the binaries.
 pub fn completions_text(shell: clap_complete::Shell, bin: &str) -> String {
-    let mut cmd = RunFlags::command().name(bin.to_string());
+    let mut cmd = RunFlags::command()
+        .name(bin.to_string())
+        .subcommands(Cli::command().get_subcommands().cloned());
     let mut buf = Vec::new();
     clap_complete::generate(shell, &mut cmd, bin, &mut buf);
     String::from_utf8_lossy(&buf).to_string()
