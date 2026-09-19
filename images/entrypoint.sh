@@ -13,6 +13,14 @@ CAP_DIR=/var/log/claude_here
 OUT_DIR=/var/log/claude_here_out
 HOME_DIR="/home/${CH_USER}"
 
+# The image was built for exactly this uid/gid; refuse to run as anything else.
+img_uid="$(id -u "${CH_USER}" 2>/dev/null || echo none)"
+img_gid="$(id -g "${CH_USER}" 2>/dev/null || echo none)"
+if [ "${img_uid}" != "${CH_UID}" ] || [ "${img_gid}" != "${CH_GID}" ]; then
+  echo "claude_here: image user ${CH_USER} is ${img_uid}:${img_gid}, host is ${CH_UID}:${CH_GID}; rebuild with --rebuild" >&2
+  exit 125
+fi
+
 mkdir -p /etc/claude_here
 printf '%s\n' "${CH_GIT_MODE}" > /etc/claude_here/git_mode
 chmod 644 /etc/claude_here/git_mode

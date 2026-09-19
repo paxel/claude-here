@@ -2,7 +2,6 @@
 
 use std::fs;
 use std::io::IsTerminal;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -38,8 +37,7 @@ pub struct HostFacts {
 impl HostFacts {
     pub fn gather(paths: &HostPaths) -> Result<Self> {
         let cwd = std::env::current_dir().context("reading current directory")?;
-        let meta =
-            fs::metadata(&paths.home).with_context(|| format!("stat {}", paths.home.display()))?;
+        let (uid, gid) = process_ids()?;
         let exists = |p: PathBuf| p.exists().then_some(p);
         let ssh_auth_sock = std::env::var_os("SSH_AUTH_SOCK")
             .map(PathBuf::from)
@@ -50,8 +48,8 @@ impl HostFacts {
         let empty_file = paths.config_dir.join("empty");
         Ok(Self {
             cwd,
-            uid: meta.uid(),
-            gid: meta.gid(),
+            uid,
+            gid,
             tty: std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
             gitconfig: exists(paths.home.join(".gitconfig")),
             ssh_auth_sock,
@@ -61,6 +59,26 @@ impl HostFacts {
             empty_file,
         })
     }
+}
+
+/// Effective uid/gid of the calling process (`id -u` / `id -g`), so container
+/// files are owned by whoever runs the tool — never derived from directory
+/// ownership.
+pub fn process_ids() -> Result<(u32, u32)> {
+    let read = |flag: &str| -> Result<u32> {
+        let out = std::process::Command::new("id")
+            .arg(flag)
+            .output()
+            .with_context(|| format!("running id {flag}"))?;
+        if !out.status.success() {
+            bail!("id {flag} failed");
+        }
+        String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .with_context(|| format!("unexpected output from id {flag}"))
+    };
+    Ok((read("-u")?, read("-g")?))
 }
 
 /// What the caller wants beyond config.
@@ -483,7 +501,7 @@ pub fn installed_claude_version() -> Option<String> {
             "--rm",
             "--entrypoint",
             "claude",
-            &format!("{}:base", image::REPO),
+            &image::base_tag(&process_ids().unwrap_or((0, 0)).0),
             "--version",
         ])
         .ok()

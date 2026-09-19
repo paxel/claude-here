@@ -211,7 +211,7 @@ pub fn shark(paths: &HostPaths, cfg: &Config, session_id: &str) -> Result<()> {
     }
     let docker = Docker::default();
     let facts = crate::run::HostFacts::gather(paths)?;
-    let image = format!("{}:base", crate::image::REPO);
+    let image = crate::image::base_tag(&facts.uid);
     docker
         .image_label(&image, crate::image::HASH_LABEL)
         .context("base image not built yet; run `claude_here build` first")?;

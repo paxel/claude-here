@@ -72,7 +72,7 @@ fn entrypoint_run(mode: &str, project: &Path, git_ro: bool, script: &str) -> Str
             &format!("CH_GIT_MODE={mode}"),
             "-e",
             "CH_NET_CAPTURE=0",
-            "claude_here:base",
+            &claude_here::image::base_tag(&uid.0),
             "bash",
             "-c",
             script,
@@ -129,7 +129,8 @@ fn dry_run_prints_docker_command() {
     assert_eq!(code, 0);
     assert!(out.starts_with("docker run --rm --init"));
     assert!(out.contains(".git:ro"));
-    assert!(out.contains("claude_here:rust claude --append-system-prompt"));
+    assert!(out.contains("claude_here:rust-u"));
+    assert!(out.contains(" claude --append-system-prompt"));
     assert!(out.trim_end().ends_with("-p x"));
 }
 
@@ -215,7 +216,7 @@ fn sandbox_user_cannot_stop_capture_and_summary_is_written() {
             "-e", "CH_SESSION_ID=cap",
             "-e", "CH_GIT_MODE=ro",
             "-e", "CH_NET_CAPTURE=1",
-            "claude_here:base", "bash", "-c",
+            &claude_here::image::base_tag(&uid.0), "bash", "-c",
             "sleep 1; kill $(pgrep tcpdump) 2>&1; echo kill=$?; curl -sS -o /dev/null http://example.com/; echo curl=$?",
         ]
         .iter()

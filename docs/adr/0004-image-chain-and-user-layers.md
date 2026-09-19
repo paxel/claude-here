@@ -14,8 +14,13 @@ not silently go stale.
 Images are built locally only:
 
 ```
-claude_here:base  →  claude_here:<variant>  →  claude_here:<variant>-user  →  claude_here:<variant>-user-<sha8(project path)>
+claude_here:base-u<uid>  →  claude_here:<variant>-u<uid>  →  ...-u<uid>-user  →  ...-u<uid>-user-<sha8(project path)>
 ```
+
+The uid is part of the tag: several host users on one docker daemon each get
+an own chain instead of rebuilding each other's images. uid/gid come from the
+invoking process (`id -u`/`id -g`), never from directory ownership, and the
+entrypoint refuses to start when the image's user does not match.
 
 * `base` embeds the container user name, uid, gid and the Claude Code version;
   they are build args and part of the hash.

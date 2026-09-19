@@ -20,6 +20,17 @@ pub const VERSION_LABEL: &str = "claude_here.version";
 /// Known variants shipped with the tool.
 pub const VARIANTS: &[&str] = &["base", "rust", "jvm"];
 
+/// Tag of a variant image for a host uid. Images embed uid/gid/user name, so
+/// every host user gets an own chain on a shared docker daemon.
+pub fn variant_tag(variant: &str, uid: u32) -> String {
+    format!("{REPO}:{variant}-u{uid}")
+}
+
+/// Tag of the base image for a host uid.
+pub fn base_tag(uid: &u32) -> String {
+    variant_tag("base", *uid)
+}
+
 const DOCKERFILE_BASE: &str = include_str!("../images/Dockerfile.base");
 const DOCKERFILE_RUST: &str = include_str!("../images/Dockerfile.rust");
 const DOCKERFILE_JVM: &str = include_str!("../images/Dockerfile.jvm");
@@ -111,10 +122,11 @@ pub fn wrap_user_layer(parent: &str, user: &str, snippet: &str) -> String {
 }
 
 /// Compute the tag for a project layer.
-pub fn project_tag(variant: &str, has_user_layer: bool, project_dir: &Path) -> String {
+pub fn project_tag(variant: &str, uid: u32, has_user_layer: bool, project_dir: &Path) -> String {
     let suffix = if has_user_layer { "user" } else { "p" };
     format!(
-        "{REPO}:{variant}-{suffix}-{}",
+        "{}-{suffix}-{}",
+        variant_tag(variant, uid),
         short_hash(&project_dir.display().to_string())
     )
 }
@@ -148,20 +160,20 @@ impl Builder<'_> {
         let user_snippet = read_snippet(&user_file)?;
         let has_user = user_snippet.as_deref().is_some_and(has_instructions);
         if let Some(snippet) = user_snippet.filter(|s| has_instructions(s)) {
-            let next_tag = format!("{REPO}:{variant}-user");
+            let next_tag = format!("{}-user", variant_tag(variant, self.identity.uid));
             (tag, hash) = self.ensure_layer(&next_tag, &tag, &hash, &snippet)?;
         }
         let project_file = project_dir.join("Dockerfile");
         if let Some(snippet) = read_snippet(&project_file)?.filter(|s| has_instructions(s)) {
-            let next_tag = project_tag(variant, has_user, project_dir);
+            let next_tag = project_tag(variant, self.identity.uid, has_user, project_dir);
             (tag, _) = self.ensure_layer(&next_tag, &tag, &hash, &snippet)?;
         }
         Ok(tag)
     }
 
     fn ensure_base(&self) -> Result<(String, String)> {
-        let tag = format!("{REPO}:base");
         let id = &self.identity;
+        let tag = base_tag(&id.uid);
         let hash = hash_inputs(&[
             DOCKERFILE_BASE,
             ENTRYPOINT,
@@ -204,7 +216,7 @@ impl Builder<'_> {
         parent: &str,
         parent_hash: &str,
     ) -> Result<(String, String)> {
-        let tag = format!("{REPO}:{variant}");
+        let tag = variant_tag(variant, self.identity.uid);
         let text = variant_dockerfile(variant).context("unknown variant")?;
         let hash = hash_inputs(&[parent_hash, text]);
         if self.is_current(&tag, &hash) {
@@ -338,12 +350,16 @@ mod tests {
 
     #[test]
     fn project_tag_is_short_and_distinct() {
-        let a = project_tag("rust", true, Path::new("/home/axel/a"));
-        let b = project_tag("rust", true, Path::new("/home/axel/b"));
-        assert!(a.starts_with("claude_here:rust-user-"));
-        assert_eq!(a.len(), "claude_here:rust-user-".len() + 8);
+        let a = project_tag("rust", 1000, true, Path::new("/home/axel/a"));
+        let b = project_tag("rust", 1000, true, Path::new("/home/axel/b"));
+        assert!(a.starts_with("claude_here:rust-u1000-user-"));
+        assert_eq!(a.len(), "claude_here:rust-u1000-user-".len() + 8);
         assert_ne!(a, b);
-        assert!(project_tag("base", false, Path::new("/x")).starts_with("claude_here:base-p-"));
+        assert!(
+            project_tag("base", 1001, false, Path::new("/x"))
+                .starts_with("claude_here:base-u1001-p-")
+        );
+        assert_ne!(variant_tag("base", 1000), variant_tag("base", 1001));
     }
 
     #[test]

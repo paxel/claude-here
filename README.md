@@ -32,8 +32,10 @@ claude_yolo                      # --dangerously-skip-permissions, still sandbox
   container; the sandbox user cannot stop it or read it. After the session a
   `tshark` summary tells you which hosts were contacted, how often and how much
   data went each way. `claude_here net last|top|grep|shark` reads it back.
-* **Non-root, no sudo.** The container user (default `ni`, uid/gid taken from
-  your host user) has no way up. All capabilities except the handful the root
+* **Non-root, no sudo.** The container user (default `ni`) is created with
+  the uid/gid of the invoking host user, so every file it writes is yours;
+  the image chain is per host user (`claude_here:<variant>-u<uid>`) and the
+  entrypoint refuses to start on a uid mismatch. It has no way up. All capabilities except the handful the root
   entrypoint needs are dropped, `no-new-privileges` is set.
 * **Ephemeral containers, persistent state where it matters.** Each run is a
   fresh `--rm` container. Claude's own state (`~/.claude`: sessions, memory,
@@ -149,7 +151,8 @@ to any run.
 ### Images
 
 All images are built locally; nothing is pulled from a registry except the
-Debian base.
+Debian base. Tags carry the host uid (`claude_here:rust-u1000`) because the
+user, uid and gid are baked in.
 
 | Variant | Adds |
 |---------|------|

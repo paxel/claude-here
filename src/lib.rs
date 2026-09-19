@@ -103,7 +103,11 @@ fn dry_run(
         yolo,
         i_know,
         claude_args,
-        image_tag: format!("{}:{}", image::REPO, cfg.image),
+        image_tag: if image::is_known_variant(&cfg.image) {
+            image::variant_tag(&cfg.image, facts.uid)
+        } else {
+            cfg.image.clone()
+        },
         session_id: session::new_session_id(),
     };
     let a = run::assemble(cfg, paths, &facts, &git, &req)?;
@@ -278,7 +282,13 @@ fn uninstall(paths: &HostPaths, purge: bool, yes: bool) -> Result<()> {
             image::REPO,
         ])
         .unwrap_or_default();
-    let tags: Vec<&str> = images.lines().filter(|l| !l.is_empty()).collect();
+    // Only this host user's chain; other users on the same daemon keep theirs.
+    let (uid, _) = run::process_ids()?;
+    let marker = format!("-u{uid}");
+    let tags: Vec<&str> = images
+        .lines()
+        .filter(|l| !l.is_empty() && (l.contains(&format!("{marker}-")) || l.ends_with(&marker)))
+        .collect();
     if !yes {
         println!(
             "will remove {} image(s){}",
