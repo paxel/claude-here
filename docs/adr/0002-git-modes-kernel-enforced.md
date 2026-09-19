@@ -23,7 +23,10 @@ Three modes, default `ro`:
   tags, remote configuration, config writes and remote operations. The mode is
   read from a root-owned file (`/etc/claude_here/git_mode`), not from the
   environment, so the sandbox user cannot flip it.
-* `full` — no restriction; `--ssh` / `--gh` become effective.
+* `full` — no restriction; `--ssh` (agent socket forwarded) and `--gh`
+  (host `gh auth token` passed as `GH_TOKEN` through a per-run 0600 env-file;
+  `~/.config/gh` is not mounted because keyring-backed logins keep no token
+  there) become effective.
 
 `claude_yolo` refuses `full` unless `--i-know` is given.
 

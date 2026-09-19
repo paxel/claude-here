@@ -156,10 +156,15 @@ pub fn extract_token(text: &str) -> Option<String> {
 
 /// Write the docker `--env-file` formatted token with mode 0600.
 pub fn write_token(path: &Path, token: &str) -> Result<()> {
+    write_env_file(path, "CLAUDE_CODE_OAUTH_TOKEN", token)
+}
+
+/// Write a one-variable docker `--env-file` with mode 0600.
+pub fn write_env_file(path: &Path, key: &str, value: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, format!("CLAUDE_CODE_OAUTH_TOKEN={token}\n"))
+    fs::write(path, format!("{key}={value}\n"))
         .with_context(|| format!("writing {}", path.display()))?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     Ok(())

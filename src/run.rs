@@ -28,23 +28,22 @@ pub struct HostFacts {
     pub gitconfig: Option<PathBuf>,
     pub ssh_auth_sock: Option<PathBuf>,
     pub known_hosts: Option<PathBuf>,
-    pub gh_config_dir: Option<PathBuf>,
+    /// Token from `gh auth token` on the host (keyring-backed logins keep it
+    /// out of `hosts.yml`); only gathered when `gh` is requested in `full` mode.
+    pub gh_token: Option<String>,
     pub token_file: Option<PathBuf>,
     /// Absolute host path of an empty file used to mask excluded cache files.
     pub empty_file: PathBuf,
 }
 
 impl HostFacts {
-    pub fn gather(paths: &HostPaths) -> Result<Self> {
+    pub fn gather(paths: &HostPaths, cfg: &Config) -> Result<Self> {
         let cwd = std::env::current_dir().context("reading current directory")?;
         let (uid, gid) = process_ids()?;
         let exists = |p: PathBuf| p.exists().then_some(p);
         let ssh_auth_sock = std::env::var_os("SSH_AUTH_SOCK")
             .map(PathBuf::from)
             .filter(|p| p.exists());
-        let gh_dir = std::env::var_os("XDG_CONFIG_HOME")
-            .map_or_else(|| paths.home.join(".config"), PathBuf::from)
-            .join("gh");
         let empty_file = paths.config_dir.join("empty");
         Ok(Self {
             cwd,
@@ -54,11 +53,31 @@ impl HostFacts {
             gitconfig: exists(paths.home.join(".gitconfig")),
             ssh_auth_sock,
             known_hosts: exists(paths.home.join(".ssh").join("known_hosts")),
-            gh_config_dir: exists(gh_dir),
+            gh_token: (cfg.gh && cfg.git_mode == GitMode::Full)
+                .then(host_gh_token)
+                .flatten(),
             token_file: exists(paths.token_file()),
             empty_file,
         })
     }
+}
+
+/// `gh auth token` on the host, if gh is installed and logged in.
+fn host_gh_token() -> Option<String> {
+    let out = std::process::Command::new("gh")
+        .args(["auth", "token"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let t = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!t.is_empty()).then_some(t)
+}
+
+/// Per-run env-file carrying `GH_TOKEN`; written 0600 before and removed after the run.
+pub fn gh_env_file(paths: &HostPaths, session_id: &str) -> PathBuf {
+    paths.config_dir.join(format!("gh-{session_id}.env"))
 }
 
 /// Effective uid/gid of the calling process (`id -u` / `id -g`), so container
@@ -202,7 +221,7 @@ pub fn assemble(
         mounts,
         env,
         env_passthrough,
-        env_files: vec![token_file],
+        env_files: env_files(token_file, gh.then(|| gh_env_file(paths, &req.session_id))),
         memory: cfg.memory.clone(),
         cpus: cfg.cpus.map(|c| c.to_string()),
         extra_args: cfg.docker_args.clone(),
@@ -214,6 +233,12 @@ pub fn assemble(
         info,
         warnings,
     })
+}
+
+fn env_files(token_file: PathBuf, gh_file: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut v = vec![token_file];
+    v.extend(gh_file);
+    v
 }
 
 /// User-configured mounts (`[[mounts]]` / `--mount*`).
@@ -323,11 +348,16 @@ fn add_ssh_gh(
         }
     }
     if cfg.gh {
-        if let Some(dir) = &facts.gh_config_dir {
-            mounts.push(Mount::ro(dir, chome.join(".config").join("gh")));
+        // Only the token travels (per-run env-file). Mounting ~/.config/gh is
+        // pointless: keyring-backed logins keep no token in hosts.yml and the
+        // stale entry would make `gh auth status` report an invalid account.
+        if facts.gh_token.is_some() {
             gh = true;
         } else {
-            warnings.push("--gh requested but no gh config directory found; skipped".into());
+            warnings.push(
+                "--gh requested but `gh auth token` returned nothing on the host; gh inside will be unauthenticated"
+                    .into(),
+            );
         }
     }
     (ssh, gh)
@@ -448,7 +478,7 @@ pub fn execute(
 ) -> Result<i32> {
     let docker = Docker::default();
     docker.check()?;
-    let facts = HostFacts::gather(paths)?;
+    let facts = HostFacts::gather(paths, cfg)?;
     let git = crate::git::scan(&facts.cwd)?;
     let builder = Builder {
         docker: &docker,
@@ -496,7 +526,15 @@ pub fn execute(
         },
         if yolo { " | YOLO" } else { "" }
     );
-    let code = docker.run_inherit(&assembled.spec.to_args())?;
+    let gh_file = gh_env_file(paths, &req.session_id);
+    if assembled.info.gh
+        && let Some(token) = &facts.gh_token
+    {
+        crate::init::write_env_file(&gh_file, "GH_TOKEN", token)?;
+    }
+    let code = docker.run_inherit(&assembled.spec.to_args());
+    let _ = fs::remove_file(&gh_file);
+    let code = code?;
     if assembled.info.net_capture {
         crate::net::print_exit_summary(paths, &req.session_id, &assembled.info);
         crate::net::prune(paths, cfg.net_retention_days).ok();
@@ -508,7 +546,7 @@ pub fn execute(
 pub fn build_only(cfg: &Config, paths: &HostPaths, policy: BuildPolicy) -> Result<String> {
     let docker = Docker::default();
     docker.check()?;
-    let facts = HostFacts::gather(paths)?;
+    let facts = HostFacts::gather(paths, cfg)?;
     let builder = Builder {
         docker: &docker,
         paths,
@@ -561,7 +599,7 @@ mod tests {
             gitconfig: Some("/home/axel/.gitconfig".into()),
             ssh_auth_sock: Some("/run/user/1000/ssh".into()),
             known_hosts: Some("/home/axel/.ssh/known_hosts".into()),
-            gh_config_dir: Some("/home/axel/.config/gh".into()),
+            gh_token: Some("gho_test".into()),
             token_file: Some("/home/axel/.config/claude_here/token".into()),
             empty_file: "/home/axel/.config/claude_here/empty".into(),
         }
@@ -632,7 +670,14 @@ mod tests {
         assert!(!s.contains(".git:ro"));
         assert!(s.contains("-v /run/user/1000/ssh:/run/claude_here/ssh-agent "));
         assert!(s.contains("-e SSH_AUTH_SOCK=/run/claude_here/ssh-agent"));
-        assert!(s.contains("-v /home/axel/.config/gh:/home/ni/.config/gh:ro"));
+        assert!(!s.contains("/.config/gh"));
+        assert!(
+            s.contains("--env-file /home/axel/.config/claude_here/gh-20260919-120000-abcd.env")
+        );
+        assert!(
+            !s.contains("gho_test"),
+            "token must never be on the command line"
+        );
         assert!(a.info.ssh && a.info.gh);
         Ok(())
     }

@@ -210,7 +210,7 @@ pub fn shark(paths: &HostPaths, cfg: &Config, session_id: &str) -> Result<()> {
         bail!("no capture at {}", files.pcap.display());
     }
     let docker = Docker::default();
-    let facts = crate::run::HostFacts::gather(paths)?;
+    let facts = crate::run::HostFacts::gather(paths, cfg)?;
     let image = crate::image::base_tag(&facts.uid);
     docker
         .image_label(&image, crate::image::HASH_LABEL)

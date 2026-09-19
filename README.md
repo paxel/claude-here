@@ -25,8 +25,8 @@ claude_yolo                      # --dangerously-skip-permissions, still sandbox
   checkout, switch branches, stash, reset or push — no matter what it decides
   to try. You review the diff and commit on the host.
 * **No credentials leak.** Auth uses a long-lived token obtained once with
-  `claude setup-token`; ssh agent and `gh` config are only mounted when you ask
-  for them in `full` git mode. Host environment variables are passed only when
+  `claude setup-token`; the ssh agent and a `GH_TOKEN` (from the host's
+  `gh auth token`) are only passed when you ask for them in `full` git mode. Host environment variables are passed only when
   named explicitly.
 * **Network is recorded.** A `tcpdump` owned by a separate user runs inside the
   container; the sandbox user cannot stop it or read it. After the session a
@@ -159,7 +159,7 @@ RUN npm install -g @anthropic-ai/mcp-inspector
 | `--mount PATH`, `--mount-rw PATH` | Extra bind mount, read-only / read-write. `PATH` or `host:container`. Repeatable |
 | `--env KEY=VALUE`, `--env KEY` | Literal value, or pass `KEY` through from the host. Repeatable |
 | `--git ro\|commit\|full` | Git mode (see below). Default `ro` |
-| `--ssh`, `--gh` | Forward ssh agent / mount gh config read-only. `full` mode only |
+| `--ssh`, `--gh` | Forward ssh agent / hand the host's `gh auth token` to the container as `GH_TOKEN` (per-run 0600 env-file, never on the command line). `full` mode only |
 | `--docker-arg ARG` | Raw `docker run` argument. Repeatable |
 | `--memory 8g`, `--cpus 4` | Resource limits (none by default) |
 | `--no-net-log` | Skip network capture for this run |
@@ -174,7 +174,7 @@ RUN npm install -g @anthropic-ai/mcp-inspector
 |------|-------------|--------------------|
 | `ro` (default) | Kernel: `.git` (and worktree/submodule git dirs) bind-mounted read-only | inspect: `status`, `diff`, `log`, `blame`, … Nothing that writes |
 | `commit` | `git` wrapper in `PATH` with an allowlist | inspect, `add`, `rm`, `mv`, `commit`, `restore`, `fetch`; read-only `branch`/`tag`/`remote`/`config`. Denied: `push`, `checkout`, `switch`, branch/tag creation, `reset`, `rebase`, `merge`, `stash`, config writes, … |
-| `full` | none | everything; `--ssh` / `--gh` become available |
+| `full` | none | everything; `--ssh` / `--gh` become available (`gh` is in the image, authenticated only here) |
 
 `commit` mode is a guard rail, not a security boundary: a determined process
 can call `/usr/bin/git` or write into `.git/` directly. Only `ro` is airtight.

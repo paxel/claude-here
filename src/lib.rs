@@ -97,7 +97,7 @@ fn dry_run(
     i_know: bool,
     claude_args: Vec<String>,
 ) -> Result<i32> {
-    let facts = run::HostFacts::gather(paths)?;
+    let facts = run::HostFacts::gather(paths, cfg)?;
     let git = git::scan(&facts.cwd)?;
     let req = run::RunRequest {
         yolo,
