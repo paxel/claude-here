@@ -1,4 +1,5 @@
-# claude_here jvm variant: GraalVM CE 21 (JDK + native-image), Maven, Gradle, Kotlin.
+# jvm toolchain: GraalVM CE 21 (JDK + native-image), Maven, Gradle, Kotlin,
+# and the Eclipse JDT language server.
 ARG BASE=claude_here:base
 FROM ${BASE}
 ARG GRAALVM_VERSION=21.0.2
@@ -24,5 +25,12 @@ ENV JAVA_HOME=/opt/graalvm \
     MAVEN_HOME=/opt/maven \
     GRADLE_HOME=/opt/gradle \
     PATH="/opt/graalvm/bin:/opt/maven/bin:/opt/gradle/bin:/opt/kotlinc/bin:${PATH}"
+
+# Eclipse JDT language server, for the LSP tool on .java files. The snapshot
+# URL is stable; the launcher is the python script shipped in the tarball.
+RUN mkdir -p /opt/jdtls \
+ && curl -fsSL "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz" \
+      | tar -xz -C /opt/jdtls \
+ && ln -s /opt/jdtls/bin/jdtls /usr/local/bin/jdtls
 
 RUN java -version && native-image --version && mvn -v && gradle -v && kotlinc -version

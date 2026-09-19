@@ -1,6 +1,6 @@
-//! Image chain: `base` → variant → global user layer → project layer.
-//! Every image carries a `claude_here.hash` label; a layer is rebuilt when
-//! its inputs (Dockerfile text, build args, parent hash) change.
+//! Image chain: `base` → one layer per enabled toolchain → global user layer →
+//! project layer. Every image carries a `claude_here.hash` label; a layer is
+//! rebuilt when its inputs (Dockerfile text, build args, parent hash) change.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 
 use crate::docker::Docker;
 use crate::paths::HostPaths;
+use crate::toolchain::Toolchain;
 
 /// Image repository name.
 pub const REPO: &str = "claude_here";
@@ -17,24 +18,26 @@ pub const REPO: &str = "claude_here";
 pub const HASH_LABEL: &str = "claude_here.hash";
 /// Label holding the tool version that built the image.
 pub const VERSION_LABEL: &str = "claude_here.version";
-/// Known variants shipped with the tool.
-pub const VARIANTS: &[&str] = &["base", "rust", "jvm"];
 
-/// Tag of a variant image for a host uid. Images embed uid/gid/user name, so
+/// Tag of the base image for a host uid. Images embed uid/gid/user name, so
 /// every host user gets an own chain on a shared docker daemon.
-pub fn variant_tag(variant: &str, uid: u32) -> String {
-    format!("{REPO}:{variant}-u{uid}")
+pub fn base_tag(uid: &u32) -> String {
+    format!("{REPO}:base-u{uid}")
 }
 
-/// Tag of the base image for a host uid.
-pub fn base_tag(uid: &u32) -> String {
-    variant_tag("base", *uid)
+/// Tag of the image with `names` layered on the base, in build order. Each
+/// prefix of a chain is itself a valid tag, so `--go` and `--go --jvm` share
+/// the `base-go` layer.
+pub fn chain_tag(uid: u32, names: &[String]) -> String {
+    let mut tag = base_tag(&uid);
+    for n in names {
+        tag.push('-');
+        tag.push_str(n);
+    }
+    tag
 }
 
 const DOCKERFILE_BASE: &str = include_str!("../images/Dockerfile.base");
-const DOCKERFILE_RUST: &str = include_str!("../images/Dockerfile.rust");
-const DOCKERFILE_JVM: &str = include_str!("../images/Dockerfile.jvm");
-const DOCKERFILE_ADDONS: &str = include_str!("../images/Dockerfile.addons");
 const ENTRYPOINT: &str = include_str!("../images/entrypoint.sh");
 const NET_SUMMARY: &str = include_str!("../images/net-summary.sh");
 const GIT_SHIM: &str = include_str!("../images/git-shim.sh");
@@ -44,12 +47,12 @@ pub const USER_DOCKERFILE_TEMPLATE: &str = "\
 # claude_here global user layer.
 #
 # Add instructions that should be part of every claude_here image on this
-# machine. Do NOT write a FROM line: the tool builds this on top of the
-# selected variant (base, rust, jvm, ...). The build runs as root; you do not
-# need USER lines. Changes trigger an automatic rebuild on next start.
+# machine. Do NOT write a FROM line: the tool builds this on top of the enabled
+# toolchains. The build runs as root; you do not need USER lines. Changes
+# trigger an automatic rebuild on next start.
 #
-# Node.js/npm and uv have their own switches (node = true / uv = true, or
-# --node / --uv); use this file for everything else. Examples:
+# The shipped toolchains have their own switches (`toolchains = [\"rust\"]`, or
+# --rust, --jvm, --python, ...); use this file for everything else. Examples:
 # RUN apt-get update && apt-get install -y --no-install-recommends shellcheck && rm -rf /var/lib/apt/lists/*
 # RUN curl -fsSL https://example.com/tool.tar.gz | tar -xz -C /usr/local/bin
 ";
@@ -60,20 +63,6 @@ pub const PROJECT_DOCKERFILE_TEMPLATE: &str = "\
 # build context. Built on top of the global user layer.
 ";
 
-fn variant_dockerfile(variant: &str) -> Option<&'static str> {
-    match variant {
-        "base" => Some(DOCKERFILE_BASE),
-        "rust" => Some(DOCKERFILE_RUST),
-        "jvm" => Some(DOCKERFILE_JVM),
-        _ => None,
-    }
-}
-
-/// Whether the variant name is one of the shipped ones (vs. a custom image).
-pub fn is_known_variant(name: &str) -> bool {
-    VARIANTS.contains(&name)
-}
-
 /// Identity parameters that go into the base image.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identity {
@@ -81,31 +70,6 @@ pub struct Identity {
     pub uid: u32,
     pub gid: u32,
     pub claude_version: String,
-}
-
-/// Optional tools layered on top of a variant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Addons {
-    pub node: bool,
-    pub uv: bool,
-}
-
-impl Addons {
-    pub fn any(self) -> bool {
-        self.node || self.uv
-    }
-
-    /// Tag suffix such as `-node-uv`.
-    pub fn suffix(self) -> String {
-        let mut s = String::new();
-        if self.node {
-            s.push_str("-node");
-        }
-        if self.uv {
-            s.push_str("-uv");
-        }
-        s
-    }
 }
 
 /// Build policy flags.
@@ -148,7 +112,7 @@ pub fn wrap_user_layer(parent: &str, user: &str, snippet: &str) -> String {
     )
 }
 
-/// Compute the tag for a project layer on top of `stem` (variant tag + addon suffix).
+/// Compute the tag for a project layer on top of `stem` (the toolchain chain tag).
 pub fn project_tag(stem: &str, has_user_layer: bool, project_dir: &Path) -> String {
     let suffix = if has_user_layer { "user" } else { "p" };
     format!(
@@ -162,35 +126,32 @@ pub struct Builder<'a> {
     pub docker: &'a Docker,
     pub paths: &'a HostPaths,
     pub identity: Identity,
-    pub addons: Addons,
+    /// Toolchain layers in build order, as returned by `toolchain::resolve`.
+    pub toolchains: Vec<&'static Toolchain>,
     pub policy: BuildPolicy,
 }
 
 impl Builder<'_> {
-    /// Make sure the full chain for `variant` (or a custom image name) exists
-    /// and is current; returns the tag to run.
-    pub fn ensure(&self, variant: &str, project_dir: &Path) -> Result<String> {
-        if !is_known_variant(variant) {
-            // Custom image: user is responsible; just make sure it exists.
-            if self.docker.image_label(variant, "").is_none()
-                && self.docker.output(&["image", "inspect", variant]).is_err()
+    /// Make sure the chain exists and is current; returns the tag to run. A
+    /// custom image bypasses the chain entirely and is only checked for
+    /// existence.
+    pub fn ensure(&self, custom_image: Option<&str>, project_dir: &Path) -> Result<String> {
+        if let Some(image) = custom_image {
+            if self.docker.image_label(image, "").is_none()
+                && self.docker.output(&["image", "inspect", image]).is_err()
             {
-                bail!("custom image '{variant}' not found locally");
+                bail!("custom image '{image}' not found locally");
             }
-            return Ok(variant.to_string());
+            return Ok(image.to_string());
         }
         let (mut tag, mut hash) = self.ensure_base()?;
-        if variant != "base" {
-            (tag, hash) = self.ensure_variant(variant, &tag, &hash)?;
+        let mut names: Vec<String> = Vec::new();
+        for t in &self.toolchains {
+            names.push(t.name.to_string());
+            let layer_tag = chain_tag(self.identity.uid, &names);
+            (tag, hash) = self.ensure_toolchain(&layer_tag, t, &tag, &hash)?;
         }
-        if self.addons.any() {
-            (tag, hash) = self.ensure_addons(variant, &tag, &hash)?;
-        }
-        let stem = format!(
-            "{}{}",
-            variant_tag(variant, self.identity.uid),
-            self.addons.suffix()
-        );
+        let stem = chain_tag(self.identity.uid, &names);
         let user_file = self.paths.user_dockerfile();
         let user_snippet = read_snippet(&user_file)?;
         let has_user = user_snippet.as_deref().is_some_and(has_instructions);
@@ -245,60 +206,28 @@ impl Builder<'_> {
         Ok((tag, hash))
     }
 
-    fn ensure_variant(
+    fn ensure_toolchain(
         &self,
-        variant: &str,
+        tag: &str,
+        toolchain: &Toolchain,
         parent: &str,
         parent_hash: &str,
     ) -> Result<(String, String)> {
-        let tag = variant_tag(variant, self.identity.uid);
-        let text = variant_dockerfile(variant).context("unknown variant")?;
-        let hash = hash_inputs(&[parent_hash, text]);
-        if self.is_current(&tag, &hash) {
-            return Ok((tag, hash));
+        let hash = hash_inputs(&[parent_hash, toolchain.dockerfile]);
+        if self.is_current(tag, &hash) {
+            return Ok((tag.to_string(), hash));
         }
-        self.refuse_if_no_build(&tag)?;
+        self.refuse_if_no_build(tag)?;
         eprintln!("claude_here: building {tag}");
-        let ctx = BuildContext::new(variant)?;
-        ctx.write("Dockerfile", text)?;
+        let ctx = BuildContext::new(toolchain.name)?;
+        ctx.write("Dockerfile", toolchain.dockerfile)?;
         let build_args = vec![
             ("BASE".to_string(), parent.to_string()),
             ("CH_USER".to_string(), self.identity.user.clone()),
         ];
         self.docker
-            .build(&ctx.dir, &tag, &build_args, &Self::labels(&hash), false)?;
-        Ok((tag, hash))
-    }
-
-    fn ensure_addons(
-        &self,
-        variant: &str,
-        parent: &str,
-        parent_hash: &str,
-    ) -> Result<(String, String)> {
-        let tag = format!(
-            "{}{}",
-            variant_tag(variant, self.identity.uid),
-            self.addons.suffix()
-        );
-        let hash = hash_inputs(&[parent_hash, DOCKERFILE_ADDONS, &self.addons.suffix()]);
-        if self.is_current(&tag, &hash) {
-            return Ok((tag, hash));
-        }
-        self.refuse_if_no_build(&tag)?;
-        eprintln!("claude_here: building {tag}");
-        let ctx = BuildContext::new("addons")?;
-        ctx.write("Dockerfile", DOCKERFILE_ADDONS)?;
-        let flag = |b: bool| if b { "1" } else { "0" }.to_string();
-        let build_args = vec![
-            ("BASE".to_string(), parent.to_string()),
-            ("CH_USER".to_string(), self.identity.user.clone()),
-            ("ADD_NODE".to_string(), flag(self.addons.node)),
-            ("ADD_UV".to_string(), flag(self.addons.uv)),
-        ];
-        self.docker
-            .build(&ctx.dir, &tag, &build_args, &Self::labels(&hash), false)?;
-        Ok((tag, hash))
+            .build(&ctx.dir, tag, &build_args, &Self::labels(&hash), false)?;
+        Ok((tag.to_string(), hash))
     }
 
     fn ensure_layer(
@@ -389,6 +318,7 @@ impl Drop for BuildContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::toolchain;
 
     #[test]
     fn hash_is_stable_and_sensitive() {
@@ -408,39 +338,45 @@ mod tests {
 
     #[test]
     fn wraps_layer_as_root_with_entrypoint() {
-        let t = wrap_user_layer("claude_here:rust", "ni", "RUN echo hi");
-        assert!(t.starts_with("FROM claude_here:rust\n"));
+        let t = wrap_user_layer("claude_here:base-u1000-rust", "ni", "RUN echo hi");
+        assert!(t.starts_with("FROM claude_here:base-u1000-rust\n"));
         assert!(t.contains("\nUSER root\nRUN echo hi\nUSER root\n"));
         assert!(t.trim_end().ends_with("entrypoint.sh\"]"));
     }
 
     #[test]
-    fn project_tag_is_short_and_distinct() {
-        let stem = variant_tag("rust", 1000);
-        let a = project_tag(&stem, true, Path::new("/home/axel/a"));
-        let b = project_tag(&stem, true, Path::new("/home/axel/b"));
-        assert!(a.starts_with("claude_here:rust-u1000-user-"));
-        assert_eq!(a.len(), "claude_here:rust-u1000-user-".len() + 8);
-        assert_ne!(a, b);
-        assert!(
-            project_tag(&variant_tag("base", 1001), false, Path::new("/x"))
-                .starts_with("claude_here:base-u1001-p-")
+    fn chain_tag_lists_toolchains_in_build_order() {
+        let chain = toolchain::resolve(&["rust".into(), "jvm".into()]).unwrap_or_default();
+        let names = toolchain::names(&chain);
+        assert_eq!(
+            chain_tag(1000, &names),
+            "claude_here:base-u1000-jvm-rust".to_string()
         );
-        assert_ne!(variant_tag("base", 1000), variant_tag("base", 1001));
-        let ad = Addons {
-            node: true,
-            uv: true,
-        };
-        assert_eq!(ad.suffix(), "-node-uv");
-        assert_eq!(Addons::default().suffix(), "");
-        assert!(!Addons::default().any());
+        assert_eq!(chain_tag(1000, &[]), base_tag(&1000));
+        assert_ne!(base_tag(&1000), base_tag(&1001));
     }
 
     #[test]
-    fn variants_have_dockerfiles() {
-        for v in VARIANTS {
-            assert!(variant_dockerfile(v).is_some(), "{v}");
-        }
-        assert!(variant_dockerfile("golang").is_none());
+    fn chain_tag_stays_within_the_docker_limit() {
+        let all: Vec<String> = toolchain::TOOLCHAINS
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        let tag = project_tag(&chain_tag(1000, &all), true, Path::new("/home/axel/p"));
+        assert!(tag.len() <= 128, "tag too long: {} ({})", tag, tag.len());
+    }
+
+    #[test]
+    fn project_tag_is_short_and_distinct() {
+        let stem = chain_tag(1000, &["rust".to_string()]);
+        let a = project_tag(&stem, true, Path::new("/home/axel/a"));
+        let b = project_tag(&stem, true, Path::new("/home/axel/b"));
+        assert!(a.starts_with("claude_here:base-u1000-rust-user-"));
+        assert_eq!(a.len(), "claude_here:base-u1000-rust-user-".len() + 8);
+        assert_ne!(a, b);
+        assert!(
+            project_tag(&base_tag(&1001), false, Path::new("/x"))
+                .starts_with("claude_here:base-u1001-p-")
+        );
     }
 }

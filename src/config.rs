@@ -1,7 +1,7 @@
 //! TOML configuration: global (`~/.config/claude_here/config.toml`) is
 //! overridden by project (`.claude_here/config.toml`), which is overridden
-//! by CLI flags. Lists (mounts, env, docker_args) are concatenated in that
-//! order.
+//! by CLI flags. Lists (toolchains, mounts, env, docker_args) are concatenated
+//! in that order.
 
 use std::fmt;
 use std::fs;
@@ -13,8 +13,6 @@ use serde::{Deserialize, Serialize};
 
 /// Default container user name.
 pub const DEFAULT_USER: &str = "ni";
-/// Default image variant.
-pub const DEFAULT_IMAGE: &str = "base";
 /// Default network capture retention.
 pub const DEFAULT_NET_RETENTION_DAYS: u32 = 90;
 
@@ -60,6 +58,89 @@ impl FromStr for GitMode {
     }
 }
 
+/// How much of a live cloud account the container may touch. Mirrors
+/// `GitMode`: `none` mounts no credentials at all, `ro` mounts them behind
+/// verb-allowlisting shims, `full` is unrestricted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CloudMode {
+    /// No cloud credentials are mounted. Authoring and validating only.
+    #[default]
+    None,
+    /// Credentials mounted; `kubectl`, `helm`, `terraform` and the vendor CLIs
+    /// are shims that allow read verbs only.
+    Ro,
+    /// No restriction.
+    Full,
+}
+
+impl CloudMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Ro => "ro",
+            Self::Full => "full",
+        }
+    }
+}
+
+impl fmt::Display for CloudMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for CloudMode {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "none" => Ok(Self::None),
+            "ro" => Ok(Self::Ro),
+            "full" => Ok(Self::Full),
+            other => bail!("unknown cloud mode '{other}' (expected none, ro or full)"),
+        }
+    }
+}
+
+/// Whether egress is unrestricted or filtered by the in-container proxy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NetMode {
+    /// Unrestricted egress (still recorded).
+    #[default]
+    Full,
+    /// Everything except DNS and the allowlisting proxy is dropped.
+    Allowlist,
+}
+
+impl NetMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Allowlist => "allowlist",
+        }
+    }
+}
+
+impl fmt::Display for NetMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for NetMode {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "full" => Ok(Self::Full),
+            "allowlist" => Ok(Self::Allowlist),
+            other => bail!("unknown net mode '{other}' (expected full or allowlist)"),
+        }
+    }
+}
+
 /// Mount access mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -81,9 +162,10 @@ pub struct MountSpec {
     pub target: Option<String>,
 }
 
-/// Host cache directories mounted into the container.
+/// Host cache directories mounted into the container. Every key corresponds to
+/// a `toolchain::Cache` key; unset keys use the toolchain's default path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct CachesFile {
     /// Use `~/.config/claude_here/cache/*` instead of host caches.
     pub isolated: Option<bool>,
@@ -92,10 +174,35 @@ pub struct CachesFile {
     pub cargo: Option<String>,
     pub npm: Option<String>,
     pub uv: Option<String>,
+    pub pip: Option<String>,
+    pub go: Option<String>,
+    #[serde(rename = "pub")]
+    pub pub_cache: Option<String>,
+    pub conan: Option<String>,
+    pub android: Option<String>,
     /// File names inside `~/.m2` masked with an empty read-only file.
     pub m2_exclude: Option<Vec<String>>,
     /// File names inside `~/.gradle` masked with an empty read-only file.
     pub gradle_exclude: Option<Vec<String>>,
+}
+
+impl CachesFile {
+    /// Configured host path for a `toolchain::Cache` key, if any.
+    pub fn override_for(&self, key: &str) -> Option<&str> {
+        match key {
+            "m2" => self.m2.as_deref(),
+            "gradle" => self.gradle.as_deref(),
+            "cargo" => self.cargo.as_deref(),
+            "npm" => self.npm.as_deref(),
+            "uv" => self.uv.as_deref(),
+            "pip" => self.pip.as_deref(),
+            "go" => self.go.as_deref(),
+            "pub" => self.pub_cache.as_deref(),
+            "conan" => self.conan.as_deref(),
+            "android" => self.android.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 /// TLS related settings.
@@ -111,13 +218,15 @@ pub struct TlsFile {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct ConfigFile {
+    /// Custom local image, bypassing the toolchain chain entirely.
     pub image: Option<String>,
     pub user: Option<String>,
-    /// Add Node.js with the latest npm/npx to the image.
-    pub node: Option<bool>,
-    /// Add uv/uvx (fast Python package manager) to the image.
-    pub uv: Option<bool>,
+    /// Shipped toolchains to layer on the base image, in any order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub toolchains: Vec<String>,
     pub git_mode: Option<GitMode>,
+    pub cloud_mode: Option<CloudMode>,
+    pub net_mode: Option<NetMode>,
     pub ssh: Option<bool>,
     pub gh: Option<bool>,
     pub net_capture: Option<bool>,
@@ -127,6 +236,13 @@ pub struct ConfigFile {
     pub cpus: Option<f64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<String>,
+    /// Extra hosts allowed when `net_mode` is `allowlist`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub net_allow: Vec<String>,
+    /// MCP servers from the host configuration that may be used here. Nothing
+    /// is inherited: an MCP server is a granted capability (ADR 0007).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mcp: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub docker_args: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -166,9 +282,9 @@ impl ConfigFile {
         take!(
             image,
             user,
-            node,
-            uv,
             git_mode,
+            cloud_mode,
+            net_mode,
             ssh,
             gh,
             net_capture,
@@ -177,13 +293,30 @@ impl ConfigFile {
             memory,
             cpus
         );
+        self.toolchains.extend(other.toolchains);
         self.env.extend(other.env);
+        self.net_allow.extend(other.net_allow);
+        self.mcp.extend(other.mcp);
         self.docker_args.extend(other.docker_args);
         self.mounts.extend(other.mounts);
         macro_rules! take_sub {
             ($sub:ident: $($field:ident),*) => { $( if other.$sub.$field.is_some() { self.$sub.$field = other.$sub.$field; } )* };
         }
-        take_sub!(caches: isolated, m2, gradle, cargo, npm, uv, m2_exclude, gradle_exclude);
+        take_sub!(
+            caches: isolated,
+            m2,
+            gradle,
+            cargo,
+            npm,
+            uv,
+            pip,
+            go,
+            pub_cache,
+            conan,
+            android,
+            m2_exclude,
+            gradle_exclude
+        );
         take_sub!(tls: truststore, truststore_password);
         self
     }
@@ -192,11 +325,13 @@ impl ConfigFile {
 /// Fully resolved configuration with defaults applied.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
-    pub image: String,
+    /// Custom image; `None` means build the toolchain chain.
+    pub image: Option<String>,
     pub user: String,
-    pub node: bool,
-    pub uv: bool,
+    pub toolchains: Vec<String>,
     pub git_mode: GitMode,
+    pub cloud_mode: CloudMode,
+    pub net_mode: NetMode,
     pub ssh: bool,
     pub gh: bool,
     pub net_capture: bool,
@@ -205,14 +340,12 @@ pub struct Config {
     pub memory: Option<String>,
     pub cpus: Option<f64>,
     pub env: Vec<String>,
+    pub net_allow: Vec<String>,
+    pub mcp: Vec<String>,
     pub docker_args: Vec<String>,
     pub mounts: Vec<MountSpec>,
+    pub caches: CachesFile,
     pub caches_isolated: bool,
-    pub cache_m2: String,
-    pub cache_gradle: String,
-    pub cache_cargo: String,
-    pub cache_npm: String,
-    pub cache_uv: String,
     pub m2_exclude: Vec<String>,
     pub gradle_exclude: Vec<String>,
     pub truststore: Option<String>,
@@ -222,11 +355,12 @@ pub struct Config {
 impl From<ConfigFile> for Config {
     fn from(f: ConfigFile) -> Self {
         Self {
-            image: f.image.unwrap_or_else(|| DEFAULT_IMAGE.to_string()),
+            image: f.image,
             user: f.user.unwrap_or_else(|| DEFAULT_USER.to_string()),
-            node: f.node.unwrap_or(false),
-            uv: f.uv.unwrap_or(false),
+            toolchains: f.toolchains,
             git_mode: f.git_mode.unwrap_or_default(),
+            cloud_mode: f.cloud_mode.unwrap_or_default(),
+            net_mode: f.net_mode.unwrap_or_default(),
             ssh: f.ssh.unwrap_or(false),
             gh: f.gh.unwrap_or(false),
             net_capture: f.net_capture.unwrap_or(true),
@@ -235,16 +369,14 @@ impl From<ConfigFile> for Config {
             memory: f.memory,
             cpus: f.cpus,
             env: f.env,
+            net_allow: f.net_allow,
+            mcp: f.mcp,
             docker_args: f.docker_args,
             mounts: f.mounts,
             caches_isolated: f.caches.isolated.unwrap_or(false),
-            cache_m2: f.caches.m2.unwrap_or_else(|| "~/.m2".to_string()),
-            cache_gradle: f.caches.gradle.unwrap_or_else(|| "~/.gradle".to_string()),
-            cache_cargo: f.caches.cargo.unwrap_or_else(|| "~/.cargo".to_string()),
-            cache_npm: f.caches.npm.unwrap_or_else(|| "~/.npm".to_string()),
-            cache_uv: f.caches.uv.unwrap_or_else(|| "~/.cache/uv".to_string()),
-            m2_exclude: f.caches.m2_exclude.unwrap_or_default(),
-            gradle_exclude: f.caches.gradle_exclude.unwrap_or_default(),
+            m2_exclude: f.caches.m2_exclude.clone().unwrap_or_default(),
+            gradle_exclude: f.caches.gradle_exclude.clone().unwrap_or_default(),
+            caches: f.caches,
             truststore: f.tls.truststore,
             truststore_password: f
                 .tls
@@ -344,12 +476,16 @@ mod tests {
     #[test]
     fn defaults_apply() {
         let c: Config = ConfigFile::default().into();
-        assert_eq!(c.image, "base");
+        assert_eq!(c.image, None);
+        assert!(c.toolchains.is_empty());
         assert_eq!(c.user, "ni");
         assert_eq!(c.git_mode, GitMode::Ro);
+        assert_eq!(c.cloud_mode, CloudMode::None);
+        assert_eq!(c.net_mode, NetMode::Full);
         assert!(c.net_capture);
         assert_eq!(c.net_retention_days, 90);
         assert!(!c.ssh && !c.gh);
+        assert!(c.mcp.is_empty());
         assert_eq!(c.truststore_password, "changeit");
     }
 
@@ -357,7 +493,7 @@ mod tests {
     fn project_overrides_global_and_lists_append() {
         let global: ConfigFile = toml::from_str(
             r#"
-image = "rust"
+toolchains = ["rust"]
 git_mode = "commit"
 env = ["A=1"]
 [[mounts]]
@@ -367,8 +503,10 @@ path = "~/g"
         .unwrap_or_default();
         let project: ConfigFile = toml::from_str(
             r#"
-image = "jvm"
+toolchains = ["jvm"]
+cloud_mode = "ro"
 env = ["B=2"]
+mcp = ["github"]
 [[mounts]]
 path = "~/p"
 mode = "rw"
@@ -386,12 +524,15 @@ isolated = true
         let cli = ConfigFile {
             git_mode: Some(GitMode::Full),
             env: vec!["C=3".into()],
+            toolchains: vec!["docs".into()],
             ..Default::default()
         };
         let c = layers.resolve(cli);
-        assert_eq!(c.image, "jvm");
+        assert_eq!(c.toolchains, vec!["rust", "jvm", "docs"]);
         assert_eq!(c.git_mode, GitMode::Full);
+        assert_eq!(c.cloud_mode, CloudMode::Ro);
         assert_eq!(c.env, vec!["A=1", "B=2", "C=3"]);
+        assert_eq!(c.mcp, vec!["github"]);
         assert_eq!(c.mounts.len(), 2);
         assert_eq!(c.mounts[1].mode, MountMode::Rw);
         assert!(c.caches_isolated);
@@ -401,14 +542,38 @@ isolated = true
     fn unknown_keys_rejected() {
         let r: Result<ConfigFile, _> = toml::from_str("imgae = \"x\"");
         assert!(r.is_err());
+        let r: Result<ConfigFile, _> = toml::from_str("[caches]\nnope = \"x\"");
+        assert!(r.is_err());
     }
 
     #[test]
-    fn git_mode_parses() {
+    fn modes_parse() {
         assert_eq!("ro".parse::<GitMode>().ok(), Some(GitMode::Ro));
         assert_eq!("commit".parse::<GitMode>().ok(), Some(GitMode::Commit));
         assert_eq!("full".parse::<GitMode>().ok(), Some(GitMode::Full));
         assert!("yolo".parse::<GitMode>().is_err());
+        assert_eq!("none".parse::<CloudMode>().ok(), Some(CloudMode::None));
+        assert_eq!("ro".parse::<CloudMode>().ok(), Some(CloudMode::Ro));
+        assert!("commit".parse::<CloudMode>().is_err());
+        assert_eq!("full".parse::<NetMode>().ok(), Some(NetMode::Full));
+        assert_eq!(
+            "allowlist".parse::<NetMode>().ok(),
+            Some(NetMode::Allowlist)
+        );
+        assert!("none".parse::<NetMode>().is_err());
+    }
+
+    #[test]
+    fn cache_overrides_are_looked_up_by_key() {
+        let c = CachesFile {
+            m2: Some("/opt/m2".into()),
+            pub_cache: Some("/opt/pub".into()),
+            ..Default::default()
+        };
+        assert_eq!(c.override_for("m2"), Some("/opt/m2"));
+        assert_eq!(c.override_for("pub"), Some("/opt/pub"));
+        assert_eq!(c.override_for("cargo"), None);
+        assert_eq!(c.override_for("nope"), None);
     }
 
     #[test]
@@ -418,10 +583,12 @@ isolated = true
         set_key(&path, "git_mode", "commit")?;
         set_key(&path, "caches.isolated", "true")?;
         set_key(&path, "env", r#"["A=1", "B"]"#)?;
+        set_key(&path, "toolchains", r#"["rust", "docs"]"#)?;
         let f = ConfigFile::load(&path)?;
         assert_eq!(f.git_mode, Some(GitMode::Commit));
         assert_eq!(f.caches.isolated, Some(true));
         assert_eq!(f.env, vec!["A=1", "B"]);
+        assert_eq!(f.toolchains, vec!["rust", "docs"]);
         assert!(set_key(&path, "git_mode", "bogus").is_err());
         assert!(set_key(&path, "nope", "1").is_err());
         Ok(())
@@ -432,7 +599,7 @@ isolated = true
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("sub").join("config.toml");
         let f = ConfigFile {
-            image: Some("rust".into()),
+            toolchains: vec!["rust".into()],
             mounts: vec![MountSpec {
                 path: "~/x".into(),
                 mode: MountMode::Rw,

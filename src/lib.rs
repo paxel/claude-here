@@ -10,6 +10,7 @@ pub mod net;
 pub mod paths;
 pub mod run;
 pub mod session;
+pub mod toolchain;
 
 use std::io::Write;
 use std::process::ExitCode;
@@ -99,16 +100,17 @@ fn dry_run(
 ) -> Result<i32> {
     let facts = run::HostFacts::gather(paths, cfg)?;
     let git = git::scan(&facts.cwd)?;
+    let chain = toolchain::resolve(&cfg.toolchains)?;
     let req = run::RunRequest {
         yolo,
         i_know,
         claude_args,
-        image_tag: if image::is_known_variant(&cfg.image) {
-            image::variant_tag(&cfg.image, facts.uid)
-        } else {
-            cfg.image.clone()
-        },
+        image_tag: cfg
+            .image
+            .clone()
+            .unwrap_or_else(|| image::chain_tag(facts.uid, &toolchain::names(&chain))),
         session_id: session::new_session_id(),
+        toolchains: chain,
     };
     let a = run::assemble(cfg, paths, &facts, &git, &req)?;
     for w in &a.warnings {
@@ -130,11 +132,16 @@ fn dry_run(
 fn run_subcommand(paths: &HostPaths, command: Command) -> Result<()> {
     match command {
         Command::Init(args) => init::run(paths, &args),
-        Command::Build { image, rebuild } => {
+        Command::Build {
+            image,
+            toolchain,
+            rebuild,
+        } => {
             let cfg = load_config(
                 paths,
                 ConfigFile {
                     image,
+                    toolchains: toolchain,
                     ..Default::default()
                 },
             )?;
@@ -170,6 +177,10 @@ fn run_subcommand(paths: &HostPaths, command: Command) -> Result<()> {
             Ok(())
         }
         Command::Config(args) => config_command(paths, args.action),
+        Command::Toolchains => {
+            print_toolchains();
+            Ok(())
+        }
         Command::Net(args) => net_command(paths, args.action),
         Command::Completions { shell, bin } => {
             print!("{}", completions_text(shell, &bin));
@@ -196,9 +207,20 @@ fn config_command(paths: &HostPaths, action: ConfigAction) -> Result<()> {
             let merged = layers.global.clone().merged_with(layers.project.clone());
             print!("{}", toml::to_string_pretty(&merged)?);
             let effective = layers.resolve(ConfigFile::default());
+            let chain = toolchain::resolve(&effective.toolchains)?;
             println!(
-                "# effective: image={} user={} git_mode={} net_capture={}",
-                effective.image, effective.user, effective.git_mode, effective.net_capture
+                "# effective: image={} toolchains={} user={} git_mode={} cloud_mode={} net_mode={} net_capture={}",
+                effective.image.as_deref().unwrap_or("(chain)"),
+                if chain.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    toolchain::names(&chain).join(",")
+                },
+                effective.user,
+                effective.git_mode,
+                effective.cloud_mode,
+                effective.net_mode,
+                effective.net_capture
             );
             Ok(())
         }
@@ -259,6 +281,23 @@ fn net_command(paths: &HostPaths, action: NetAction) -> Result<()> {
             Ok(())
         }
         NetAction::List { limit } => net::report::print_list(&dir, limit),
+    }
+}
+
+/// One line per shipped toolchain, for `claude_here toolchains`.
+fn print_toolchains() {
+    for t in toolchain::TOOLCHAINS {
+        let mut flags = format!("--{}", t.name);
+        for a in t.aliases {
+            flags.push_str(", --");
+            flags.push_str(a);
+        }
+        let implies = if t.implies.is_empty() {
+            String::new()
+        } else {
+            format!("  (implies {})", t.implies.join(", "))
+        };
+        println!("{flags:<28} {}{implies}", t.description);
     }
 }
 

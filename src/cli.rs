@@ -3,7 +3,7 @@
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::config::{ConfigFile, GitMode, MountMode, MountSpec};
+use crate::config::{CloudMode, ConfigFile, GitMode, MountMode, MountSpec, NetMode};
 
 /// Subcommand names recognized when given as the first argument.
 pub const SUBCOMMANDS: &[&str] = &[
@@ -12,6 +12,7 @@ pub const SUBCOMMANDS: &[&str] = &[
     "update",
     "config",
     "net",
+    "toolchains",
     "completions",
     "uninstall",
 ];
@@ -24,19 +25,66 @@ pub const SUBCOMMANDS: &[&str] = &[
     about = "Run Claude Code in a project-scoped Docker sandbox",
     long_about = "Run Claude Code in a project-scoped Docker sandbox.\n\n\
 Every argument that is not a claude_here flag is forwarded to `claude` inside the container.\n\
-Use `--` to force forwarding. Subcommands: init, build, update, config, net, completions, uninstall.",
+Use `--` to force forwarding. Subcommands: init, build, update, config, net, toolchains, completions, uninstall.",
     disable_help_subcommand = true
 )]
 pub struct RunFlags {
-    /// Image variant (base, rust, jvm) or a custom local image name.
+    /// Custom local image to run instead of building the toolchain chain.
     #[arg(long, value_name = "NAME")]
     pub image: Option<String>,
-    /// Add Node.js with the latest npm/npx to the image (alias: --npm).
-    #[arg(long, visible_alias = "npm")]
+    /// Enable a toolchain by name. Repeatable; same as the per-toolchain flags.
+    #[arg(long = "toolchain", short = 't', value_name = "NAME")]
+    pub toolchain: Vec<String>,
+    /// rustup stable with clippy, rustfmt and rust-analyzer.
+    #[arg(long, help_heading = "Toolchains")]
+    pub rust: bool,
+    /// GraalVM 21, Maven, Gradle, kotlinc, jdtls.
+    #[arg(long, help_heading = "Toolchains")]
+    pub jvm: bool,
+    /// Flutter and Dart SDK (alias: --flutter).
+    #[arg(long, visible_alias = "flutter", help_heading = "Toolchains")]
+    pub dart: bool,
+    /// Node.js, npm, pnpm, yarn, TypeScript (aliases: --npm, --js).
+    #[arg(
+        long,
+        visible_alias = "npm",
+        visible_alias = "js",
+        help_heading = "Toolchains"
+    )]
     pub node: bool,
-    /// Add uv/uvx (fast Python package manager) to the image.
-    #[arg(long)]
+    /// poetry, ruff, mypy, pyright (implies --node and --uv).
+    #[arg(long, help_heading = "Toolchains")]
+    pub python: bool,
+    /// Go toolchain and gopls.
+    #[arg(long, help_heading = "Toolchains")]
+    pub go: bool,
+    /// cmake, ninja, gdb, clang, clangd, valgrind, conan (alias: --c).
+    #[arg(long, visible_alias = "c", help_heading = "Toolchains")]
+    pub cpp: bool,
+    /// uv/uvx, also how most MCP servers are launched.
+    #[arg(long, help_heading = "Toolchains")]
     pub uv: bool,
+    /// Android command line tools and platform-tools (implies --jvm).
+    #[arg(long, help_heading = "Toolchains")]
+    pub android: bool,
+    /// plantuml, d2, typst, pandoc.
+    #[arg(long, help_heading = "Toolchains")]
+    pub docs: bool,
+    /// kubectl, helm, kustomize (alias: --kubernetes).
+    #[arg(long, visible_alias = "kubernetes", help_heading = "Toolchains")]
+    pub k8s: bool,
+    /// terraform.
+    #[arg(long, help_heading = "Toolchains")]
+    pub terraform: bool,
+    /// AWS CLI v2.
+    #[arg(long, help_heading = "Toolchains")]
+    pub aws: bool,
+    /// Google Cloud CLI (large).
+    #[arg(long, help_heading = "Toolchains")]
+    pub gcloud: bool,
+    /// Azure CLI (alias: --az).
+    #[arg(long, visible_alias = "az", help_heading = "Toolchains")]
+    pub azure: bool,
     /// Mount a host path read-only (`path` or `host:container`). Repeatable.
     #[arg(long, value_name = "PATH")]
     pub mount: Vec<String>,
@@ -49,10 +97,22 @@ pub struct RunFlags {
     /// Git mode: ro (default, kernel enforced), commit, full.
     #[arg(long, value_name = "MODE")]
     pub git: Option<GitMode>,
+    /// Cloud mode: none (default, no credentials), ro (read verbs only), full.
+    #[arg(long, value_name = "MODE")]
+    pub cloud: Option<CloudMode>,
+    /// Network mode: full (default) or allowlist.
+    #[arg(long, value_name = "MODE")]
+    pub net: Option<NetMode>,
+    /// Extra host allowed in net mode allowlist. Repeatable.
+    #[arg(long = "net-allow", value_name = "HOST")]
+    pub net_allow: Vec<String>,
+    /// MCP server from the host configuration to grant here. Repeatable.
+    #[arg(long, value_name = "NAME")]
+    pub mcp: Vec<String>,
     /// Forward the ssh agent (git mode full only).
     #[arg(long)]
     pub ssh: bool,
-    /// Mount gh CLI config read-only (git mode full only).
+    /// Hand the host gh token to the container (git mode full only).
     #[arg(long)]
     pub gh: bool,
     /// Raw docker run argument, appended before the image. Repeatable.
@@ -79,7 +139,7 @@ pub struct RunFlags {
     /// Persist the given flags into the global config.
     #[arg(long = "save-global")]
     pub save_global: bool,
-    /// Allow claude_yolo together with git mode full.
+    /// Allow claude_yolo together with git mode full or cloud mode full.
     #[arg(long = "i-know")]
     pub i_know: bool,
     /// Print the docker command instead of running it.
@@ -91,6 +151,33 @@ pub struct RunFlags {
 }
 
 impl RunFlags {
+    /// Toolchain names enabled by the per-toolchain flags and `--toolchain`.
+    pub fn toolchain_names(&self) -> Vec<String> {
+        let mut v = self.toolchain.clone();
+        for (on, name) in [
+            (self.node, "node"),
+            (self.uv, "uv"),
+            (self.python, "python"),
+            (self.jvm, "jvm"),
+            (self.android, "android"),
+            (self.rust, "rust"),
+            (self.go, "go"),
+            (self.cpp, "cpp"),
+            (self.dart, "dart"),
+            (self.docs, "docs"),
+            (self.k8s, "k8s"),
+            (self.terraform, "terraform"),
+            (self.aws, "aws"),
+            (self.gcloud, "gcloud"),
+            (self.azure, "azure"),
+        ] {
+            if on {
+                v.push(name.to_string());
+            }
+        }
+        v
+    }
+
     /// The CLI layer as a config overlay.
     pub fn as_config_layer(&self) -> ConfigFile {
         let mut env = self.env.clone();
@@ -103,9 +190,12 @@ impl RunFlags {
         mounts.extend(self.mount_rw.iter().map(|m| parse_mount(m, MountMode::Rw)));
         ConfigFile {
             image: self.image.clone(),
-            node: self.node.then_some(true),
-            uv: self.uv.then_some(true),
+            toolchains: self.toolchain_names(),
             git_mode: self.git,
+            cloud_mode: self.cloud,
+            net_mode: self.net,
+            net_allow: self.net_allow.clone(),
+            mcp: self.mcp.clone(),
             ssh: self.ssh.then_some(true),
             gh: self.gh.then_some(true),
             net_capture: self.no_net_log.then_some(false),
@@ -153,9 +243,12 @@ pub enum Command {
     Init(InitArgs),
     /// Build (or refresh) the image chain for the current project without running.
     Build {
-        /// Image variant or custom image name.
+        /// Custom image name instead of the toolchain chain.
         #[arg(long)]
         image: Option<String>,
+        /// Toolchain to include. Repeatable.
+        #[arg(long = "toolchain", short = 't', value_name = "NAME")]
+        toolchain: Vec<String>,
         /// Rebuild everything.
         #[arg(long)]
         rebuild: bool,
@@ -166,6 +259,8 @@ pub enum Command {
     Config(ConfigArgs),
     /// Inspect recorded network activity.
     Net(NetArgs),
+    /// List the shipped toolchains.
+    Toolchains,
     /// Print shell completions.
     Completions {
         /// Shell: fish, bash, zsh.
@@ -280,19 +375,43 @@ pub enum NetAction {
 /// Tool flags that take a value.
 const VALUE_FLAGS: &[&str] = &[
     "--image",
+    "--toolchain",
+    "-t",
     "--mount",
     "--mount-rw",
     "--env",
     "--git",
+    "--cloud",
+    "--net",
+    "--net-allow",
+    "--mcp",
     "--docker-arg",
     "--memory",
     "--cpus",
 ];
 /// Tool flags without a value.
 const BOOL_FLAGS: &[&str] = &[
+    "--rust",
+    "--jvm",
+    "--dart",
+    "--flutter",
     "--node",
     "--npm",
+    "--js",
+    "--python",
+    "--go",
+    "--cpp",
+    "--c",
     "--uv",
+    "--android",
+    "--docs",
+    "--k8s",
+    "--kubernetes",
+    "--terraform",
+    "--aws",
+    "--gcloud",
+    "--azure",
+    "--az",
     "--ssh",
     "--gh",
     "--no-net-log",
@@ -362,11 +481,19 @@ mod tests {
         s.iter().map(|x| (*x).to_string()).collect()
     }
 
+    fn parse(tool: Vec<String>) -> RunFlags {
+        let mut argv = vec!["claude_here".to_string()];
+        argv.extend(tool);
+        match RunFlags::try_parse_from(argv) {
+            Ok(f) => f,
+            Err(e) => panic!("{e}"),
+        }
+    }
+
     #[test]
     fn splits_tool_and_claude_args() {
         let s = split_args(v(&[
-            "--image",
-            "rust",
+            "--rust",
             "--git=commit",
             "--ssh",
             "-p",
@@ -374,7 +501,7 @@ mod tests {
             "--model",
             "opus",
         ]));
-        assert_eq!(s.tool, v(&["--image", "rust", "--git=commit", "--ssh"]));
+        assert_eq!(s.tool, v(&["--rust", "--git=commit", "--ssh"]));
         assert_eq!(s.claude, v(&["-p", "hello world", "--model", "opus"]));
         assert!(!s.wants_help);
     }
@@ -388,15 +515,34 @@ mod tests {
     }
 
     #[test]
-    fn npm_alias_is_a_tool_flag() {
-        let s = split_args(v(&["--npm", "--uv", "-p", "x"]));
-        assert_eq!(s.tool, v(&["--npm", "--uv"]));
-        let mut argv = vec!["claude_here".to_string()];
-        argv.extend(s.tool);
-        let f = RunFlags::try_parse_from(argv).map_err(|e| e.to_string());
-        let Ok(f) = f else { panic!("parse") };
+    fn every_toolchain_has_a_flag_that_is_not_forwarded() {
+        for t in crate::toolchain::TOOLCHAINS {
+            let flag = format!("--{}", t.name);
+            let s = split_args(v(&[&flag]));
+            assert_eq!(s.tool, v(&[&flag]), "{flag} is forwarded to claude");
+            assert!(
+                parse(s.tool)
+                    .toolchain_names()
+                    .contains(&t.name.to_string())
+            );
+            for a in t.aliases {
+                let flag = format!("--{a}");
+                let s = split_args(v(&[&flag]));
+                assert_eq!(s.tool, v(&[&flag]), "{flag} is forwarded to claude");
+            }
+        }
+    }
+
+    #[test]
+    fn toolchain_flags_and_names_collect() {
+        let s = split_args(v(&["--npm", "--uv", "-t", "docs", "-p", "x"]));
+        assert_eq!(s.tool, v(&["--npm", "--uv", "-t", "docs"]));
+        let f = parse(s.tool);
         assert!(f.node && f.uv);
-        assert_eq!(f.as_config_layer().node, Some(true));
+        let mut names = f.toolchain_names();
+        names.sort();
+        assert_eq!(names, v(&["docs", "node", "uv"]));
+        assert_eq!(f.as_config_layer().toolchains.len(), 3);
     }
 
     #[test]
@@ -422,15 +568,16 @@ mod tests {
             "--docker-arg",
             "host",
             "--no-net-log",
+            "--cloud",
+            "ro",
+            "--net",
+            "allowlist",
+            "--net-allow",
+            "example.com",
+            "--mcp",
+            "github",
         ]));
-        let mut argv = vec!["claude_here".to_string()];
-        argv.extend(s.tool);
-        let f = RunFlags::try_parse_from(argv).map_err(|e| e.to_string());
-        let f = match f {
-            Ok(f) => f,
-            Err(e) => panic!("{e}"),
-        };
-        let layer = f.as_config_layer();
+        let layer = parse(s.tool).as_config_layer();
         assert_eq!(layer.mounts.len(), 2);
         assert_eq!(layer.mounts[0].path, "~/a");
         assert_eq!(layer.mounts[0].mode, MountMode::Ro);
@@ -439,5 +586,9 @@ mod tests {
         assert_eq!(layer.env, v(&["K=V", "T"]));
         assert_eq!(layer.docker_args, v(&["--network", "host"]));
         assert_eq!(layer.net_capture, Some(false));
+        assert_eq!(layer.cloud_mode, Some(CloudMode::Ro));
+        assert_eq!(layer.net_mode, Some(NetMode::Allowlist));
+        assert_eq!(layer.net_allow, v(&["example.com"]));
+        assert_eq!(layer.mcp, v(&["github"]));
     }
 }

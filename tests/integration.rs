@@ -125,11 +125,12 @@ fn dry_run_prints_docker_command() {
     let xdg = config_root(tmp.path());
     let project = tmp.path().join("proj");
     fs::create_dir_all(project.join(".git")).ok();
-    let (code, out, _) = run_tool(&xdg, &project, &["--dry-run", "--image", "rust", "-p", "x"]);
+    let (code, out, _) = run_tool(&xdg, &project, &["--dry-run", "--rust", "-p", "x"]);
     assert_eq!(code, 0);
     assert!(out.starts_with("docker run --rm --init"));
     assert!(out.contains(".git:ro"));
-    assert!(out.contains("claude_here:rust-u"));
+    assert!(out.contains("claude_here:base-u"));
+    assert!(out.contains("-rust "));
     assert!(out.contains(" claude --append-system-prompt"));
     assert!(out.trim_end().ends_with("-p x"));
 }

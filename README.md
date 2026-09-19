@@ -34,7 +34,7 @@ claude_yolo                      # --dangerously-skip-permissions, still sandbox
   data went each way. `claude_here net last|top|grep|shark` reads it back.
 * **Non-root, no sudo.** The container user (default `ni`) is created with
   the uid/gid of the invoking host user, so every file it writes is yours;
-  the image chain is per host user (`claude_here:<variant>-u<uid>`) and the
+  the image chain is per host user (`claude_here:base-u<uid>-...`) and the
   entrypoint refuses to start on a uid mismatch. It has no way up. All capabilities except the handful the root
   entrypoint needs are dropped, `no-new-privileges` is set.
 * **Ephemeral containers, persistent state where it matters.** Each run is a
@@ -72,7 +72,7 @@ ignore. The first `claude_here` builds the `base` image locally (a few minutes).
 claude_here [claude_here flags] [claude arguments...]
 claude_here [claude_here flags] -- [claude arguments...]
 claude_yolo ...                                  # same, skips permission prompts
-claude_here init|build|update|config|net|completions|uninstall
+claude_here init|build|update|config|net|toolchains|completions|uninstall
 ```
 
 Everything that is not a `claude_here` flag is forwarded verbatim to `claude`
@@ -91,12 +91,16 @@ claude_here -p "summarize the failing tests"
 claude_here --resume                      # claude's own flags pass straight through
 claude_here -- --help                     # claude's help (without -- it is claude_here's)
 
-# toolchains and add-ons
-claude_here --image rust                  # cargo/clippy/rustfmt, ~/.cargo caches mounted
-claude_here --image jvm --npm             # GraalVM/Maven/Gradle/kotlinc + Node 22 with npm/npx
-claude_here --uv                          # uv/uvx instead of pip
-claude_here --image rust --npm --uv --save   # remember for this project (.claude_here/config.toml)
-claude_here config set node true --global # every project gets node
+# toolchains — any combination, one image layer each
+claude_here --rust                        # cargo/clippy/rustfmt/rust-analyzer, ~/.cargo mounted
+claude_here --jvm --node                  # GraalVM/Maven/Gradle/kotlinc/jdtls + Node, npm/pnpm/yarn
+claude_here --dart --android              # Flutter + Dart, Android SDK (implies --jvm)
+claude_here --python                      # poetry/ruff/mypy/pyright (implies --node and --uv)
+claude_here --docs                        # plantuml, d2, typst, pandoc
+claude_here --k8s --terraform --cloud ro  # cluster and IaC tooling, read verbs only
+claude_here toolchains                    # what is available
+claude_here --rust --docs --save          # remember for this project (.claude_here/config.toml)
+claude_here config set toolchains '["rust"]' --global   # every project gets rust
 
 # git modes
 claude_here                               # ro: .git read-only, kernel enforced
@@ -115,9 +119,9 @@ claude_here --docker-arg --add-host --docker-arg db:10.0.0.5   # raw docker flag
 claude_here --memory 8g --cpus 4
 claude_here --rebuild                     # rebuild the whole chain now
 claude_here update                        # new Claude Code release: rebuild base without cache
-claude_here build --image jvm             # pre-build without starting a session
+claude_here build --toolchain jvm         # pre-build without starting a session
 claude_here --dry-run -p x                # print the docker run command and exit
-claude_here --image ghcr.io/me/my-dev:latest   # bring your own image (must have claude in PATH)
+claude_here --image my-dev:latest         # bring your own image (must have claude in PATH)
 
 # what did it talk to?
 claude_here net last
@@ -131,8 +135,7 @@ A project that always wants the same setup:
 
 ```toml
 # .claude_here/config.toml
-image = "jvm"
-node = true
+toolchains = ["jvm", "node"]
 git_mode = "commit"
 env = ["MAVEN_OPTS=-Xmx2g", "SONAR_TOKEN"]
 
@@ -154,8 +157,11 @@ RUN npm install -g @anthropic-ai/mcp-inspector
 
 | Flag | Meaning |
 |------|---------|
-| `--image NAME` | Variant `base` (default), `rust`, `jvm`, or any local image name |
-| `--node` (alias `--npm`), `--uv` | Add Node.js 22 with the latest npm/npx, resp. uv/uvx, as an extra image layer; `~/.npm` / `~/.cache/uv` are mounted |
+| `--rust`, `--jvm`, `--dart`, `--node`, `--python`, `--go`, `--cpp`, `--uv`, `--android`, `--docs`, `--k8s`, `--terraform`, `--aws`, `--gcloud`, `--azure` | Enable a toolchain; any combination. `-t NAME` does the same. `claude_here toolchains` lists them |
+| `--image NAME` | Run a custom local image instead of the toolchain chain (must have `claude` in `PATH`) |
+| `--cloud none\|ro\|full` | Cloud mode (see below). Default `none` |
+| `--net full\|allowlist` | Network mode. Default `full` |
+| `--net-allow HOST`, `--mcp NAME` | Extra allowed host / granted MCP server. Repeatable |
 | `--mount PATH`, `--mount-rw PATH` | Extra bind mount, read-only / read-write. `PATH` or `host:container`. Repeatable |
 | `--env KEY=VALUE`, `--env KEY` | Literal value, or pass `KEY` through from the host. Repeatable |
 | `--git ro\|commit\|full` | Git mode (see below). Default `ro` |
@@ -201,7 +207,7 @@ Two TOML files, project overrides global, CLI flags override both. Lists
 * project: `.claude_here/config.toml`
 
 ```toml
-image = "rust"
+toolchains = ["rust"]
 git_mode = "commit"
 env = ["EDITOR=nano", "GITHUB_TOKEN"]
 
@@ -223,33 +229,65 @@ claude_here config set git_mode commit        # project
 claude_here config set caches.isolated true --global
 claude_here config set env '["EDITOR=nano","GITHUB_TOKEN"]'
 claude_here config path
-claude_here --image rust --git commit --save  # same thing from a run
+claude_here --rust --git commit --save        # same thing from a run
 ```
 
 ### Images
 
 All images are built locally; nothing is pulled from a registry except the
-Debian base. Tags carry the host uid (`claude_here:rust-u1000`) because the
-user, uid and gid are baked in.
+Debian base. Tags carry the host uid (`claude_here:base-u1000-jvm-rust`) because
+the user, uid and gid are baked in.
 
-| Variant | Adds |
-|---------|------|
-| `base` | Debian trixie slim, Claude Code (native installer), git, gh, curl, ripgrep, fd, jq, python3 + pip/venv, build-essential, pkg-config, libssl-dev, openssh-client, tcpdump, tshark, termshark |
-| `rust` | rustup stable with clippy and rustfmt; host `~/.cargo/registry` and `~/.cargo/git` mounted |
-| `jvm` | GraalVM CE 21 (JDK + native-image), Maven, Gradle, kotlinc; host `~/.m2` and `~/.gradle` mounted |
+```
+claude_here:base-u<uid>  →  ...-<toolchain>...  →  ...-user  →  ...-user-<sha8(project path)>
+```
 
-Layers on top of the variant:
+Toolchains compose: every one is a layer, they are applied in a fixed order
+regardless of the order you type them, and each prefix of a chain is itself a
+usable image — so `--go` and later `--go --jvm` share the `base-go` layer. A
+toolchain brings its own host cache mounts, the language server for its files,
+and (under `--net allowlist`) the hosts its package manager needs.
 
-* add-ons: `node = true` (Node.js 22 + latest npm/npx — many MCP servers and
-  plugin hooks need it) and `uv = true` (uv/uvx, the Rust-based Python package
-  manager; use it instead of pip). Tag suffix `-node-uv`.
+| Toolchain | Adds | Host caches |
+|-----------|------|-------------|
+| `node` (`npm`, `js`) | Node.js 22, npm, pnpm, yarn, TypeScript, typescript-language-server | `~/.npm` |
+| `uv` | uv/uvx — also how most MCP servers are launched | `~/.cache/uv` |
+| `python` | poetry, ruff, mypy, pyright (implies `node`, `uv`) | `~/.cache/pip` |
+| `jvm` | GraalVM CE 21 (JDK + native-image), Maven, Gradle, kotlinc, jdtls | `~/.m2`, `~/.gradle` |
+| `android` | Android command line tools + platform-tools, licences accepted (implies `jvm`) | `~/Android/Sdk` (platforms, build-tools, ndk) |
+| `rust` | rustup stable, clippy, rustfmt, rust-analyzer | `~/.cargo/{registry,git}` |
+| `go` | Go toolchain, gopls | `~/go/pkg/mod` |
+| `cpp` (`c`) | cmake, ninja, gdb, clang, clangd, clang-format, clang-tidy, valgrind, conan | `~/.conan2` |
+| `dart` (`flutter`) | Flutter and Dart SDK with the Dart language server | `~/.pub-cache` |
+| `docs` | plantuml, d2, typst, pandoc (graphviz is in the base) | — |
+| `k8s` (`kubernetes`) | kubectl, helm, kustomize | — |
+| `terraform` | terraform | — |
+| `aws` | AWS CLI v2 | — |
+| `gcloud` | Google Cloud CLI (~1GB) | — |
+| `azure` (`az`) | Azure CLI | — |
+
+The base image holds Debian trixie slim, Claude Code (native installer), git,
+gh, curl, ripgrep, fd, jq, graphviz, python3 + pip/venv, build-essential,
+pkg-config, libssl-dev, openssh-client, tcpdump, tshark and termshark.
+
+Two toolchains imply another, because they cannot work without it: `android`
+implies `jvm`, and `python` implies `node` and `uv` (pyright is a node program).
+`docs` installs a headless JRE only when the image has no `java` yet, so
+`--jvm --docs` reuses GraalVM.
+
+On top of the chain:
+
 * `~/.config/claude_here/Dockerfile` — global user layer, applied to every
-  variant. Plain instructions, no `FROM`, root build context.
+  image. Plain instructions, no `FROM`, root build context.
 * `.claude_here/Dockerfile` — project layer on top of that.
 
 Layers are rebuilt automatically when their content changes (hash stored as an
 image label). `claude_here update` rebuilds the base without cache to pick up
 a new Claude Code release; pin one with `claude_version = "1.2.3"`.
+
+**iOS cannot be built in the sandbox.** Xcode and the iOS SDKs are macOS-only
+and the container is Debian even on a Mac. Claude can edit `ios/` sources and
+run the Dart side; building and signing stay on a Mac or in CI.
 
 ### Network recording
 
@@ -295,7 +333,7 @@ Every session also prints one line at exit
 
 ```json
 {"tool":"claude_here","version":"0.1.0","session_id":"20260919-095014-8865",
- "image":"claude_here:base-u1000","git_mode":"ro","yolo":false,"user":"ni",
+ "image":"claude_here:base-u1000","toolchains":[],"git_mode":"ro","yolo":false,"user":"ni",
  "cwd_host":"/home/axel/src/foo","cwd":"/home/ni/src/foo",
  "mounts":[{"host":"/home/axel/src/foo","container":"/home/ni/src/foo","mode":"rw"},
            {"host":"/home/axel/src/foo/.git","container":"/home/ni/src/foo/.git","mode":"ro"}],

@@ -9,9 +9,10 @@ use anyhow::{Context, Result, bail};
 use crate::config::{Config, GitMode, MountMode};
 use crate::docker::{Docker, Mount, RunSpec, uses_host_network};
 use crate::git::GitLayout;
-use crate::image::{self, Addons, BuildPolicy, Builder, Identity};
+use crate::image::{self, BuildPolicy, Builder, Identity};
 use crate::paths::{HostPaths, PathRewriter, project_dir};
 use crate::session::{MountInfo, SessionInfo, new_session_id, sanitize_name};
+use crate::toolchain::{self, Toolchain};
 
 /// Container-side path of the host net log directory.
 pub const NET_OUT_DIR: &str = "/var/log/claude_here_out";
@@ -108,6 +109,8 @@ pub struct RunRequest {
     pub claude_args: Vec<String>,
     pub image_tag: String,
     pub session_id: String,
+    /// Enabled toolchains in build order, as resolved by `toolchain::resolve`.
+    pub toolchains: Vec<&'static Toolchain>,
 }
 
 /// Assembly output.
@@ -165,36 +168,22 @@ pub fn assemble(
     }
 
     add_extra_mounts(cfg, paths, &rw, &mut mounts);
-    add_cache_mounts(cfg, paths, facts, &rw, &mut mounts, &mut warnings);
+    add_cache_mounts(
+        cfg,
+        paths,
+        facts,
+        &rw,
+        &req.toolchains,
+        &mut mounts,
+        &mut warnings,
+    );
     add_truststore(cfg, paths, &chome, &mut mounts, &mut env);
 
     let (ssh, gh) = add_ssh_gh(cfg, facts, &chome, &mut mounts, &mut env, &mut warnings);
 
     let env_passthrough = add_env(cfg, facts, req, &chome, net_capture, &mut env);
 
-    let mount_infos = mounts
-        .iter()
-        .map(|m| MountInfo {
-            host: m.host.clone(),
-            container: m.container.clone(),
-            mode: if m.read_only { "ro" } else { "rw" }.to_string(),
-        })
-        .collect();
-    let info = SessionInfo {
-        tool: "claude_here".into(),
-        version: env!("CARGO_PKG_VERSION").into(),
-        session_id: req.session_id.clone(),
-        image: req.image_tag.clone(),
-        git_mode: cfg.git_mode,
-        yolo: req.yolo,
-        user: cfg.user.clone(),
-        cwd_host: facts.cwd.clone(),
-        cwd: cwd_c.clone(),
-        mounts: mount_infos,
-        net_capture,
-        ssh,
-        gh,
-    };
+    let info = session_info(cfg, facts, req, &cwd_c, &mounts, net_capture, ssh, gh);
     env.push((
         "CLAUDE_HERE_SESSION_INFO".into(),
         serde_json::to_string(&info).context("serializing session info")?,
@@ -233,6 +222,43 @@ pub fn assemble(
         info,
         warnings,
     })
+}
+
+/// The blob handed to Claude: what was granted and where things are.
+#[allow(clippy::too_many_arguments)]
+fn session_info(
+    cfg: &Config,
+    facts: &HostFacts,
+    req: &RunRequest,
+    cwd_c: &Path,
+    mounts: &[Mount],
+    net_capture: bool,
+    ssh: bool,
+    gh: bool,
+) -> SessionInfo {
+    SessionInfo {
+        tool: "claude_here".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        session_id: req.session_id.clone(),
+        image: req.image_tag.clone(),
+        toolchains: toolchain::names(&req.toolchains),
+        git_mode: cfg.git_mode,
+        yolo: req.yolo,
+        user: cfg.user.clone(),
+        cwd_host: facts.cwd.clone(),
+        cwd: cwd_c.to_path_buf(),
+        mounts: mounts
+            .iter()
+            .map(|m| MountInfo {
+                host: m.host.clone(),
+                container: m.container.clone(),
+                mode: if m.read_only { "ro" } else { "rw" }.to_string(),
+            })
+            .collect(),
+        net_capture,
+        ssh,
+        gh,
+    }
 }
 
 fn env_files(token_file: PathBuf, gh_file: Option<PathBuf>) -> Vec<PathBuf> {
@@ -368,17 +394,11 @@ fn add_cache_mounts(
     paths: &HostPaths,
     facts: &HostFacts,
     rw: &PathRewriter,
+    chain: &[&Toolchain],
     mounts: &mut Vec<Mount>,
     warnings: &mut Vec<String>,
 ) {
     let chome = rw.container_home();
-    let resolve = |configured: &str, isolated_name: &str| -> PathBuf {
-        if cfg.caches_isolated {
-            paths.cache_dir().join(isolated_name)
-        } else {
-            paths.expand_tilde(configured)
-        }
-    };
     let credential_warning = |dir: &Path, file: &str, key: &str, warnings: &mut Vec<String>| {
         if dir.join(file).exists() {
             warnings.push(format!(
@@ -387,49 +407,41 @@ fn add_cache_mounts(
             ));
         }
     };
-    match cfg.image.as_str() {
-        "jvm" => {
-            let m2 = resolve(&cfg.cache_m2, "m2");
-            mounts.push(Mount::rw(&m2, chome.join(".m2")));
-            if !cfg.m2_exclude.iter().any(|f| f == "settings.xml") {
-                credential_warning(&m2, "settings.xml", "m2", warnings);
+    for t in chain {
+        for c in t.caches {
+            let host = if cfg.caches_isolated {
+                paths.cache_dir().join(c.key)
+            } else {
+                paths.expand_tilde(cfg.caches.override_for(c.key).unwrap_or(c.host))
+            };
+            let target = if c.container.starts_with('/') {
+                PathBuf::from(c.container)
+            } else {
+                chome.join(c.container)
+            };
+            if c.subdirs.is_empty() {
+                mounts.push(Mount::rw(&host, &target));
+            } else {
+                for sub in c.subdirs {
+                    mounts.push(Mount::rw(host.join(sub), target.join(sub)));
+                }
             }
-            for f in &cfg.m2_exclude {
-                mounts.push(Mount::ro(&facts.empty_file, chome.join(".m2").join(f)));
-            }
-            let gradle = resolve(&cfg.cache_gradle, "gradle");
-            mounts.push(Mount::rw(&gradle, chome.join(".gradle")));
-            if !cfg.gradle_exclude.iter().any(|f| f == "gradle.properties") {
-                credential_warning(&gradle, "gradle.properties", "gradle", warnings);
-            }
-            for f in &cfg.gradle_exclude {
-                mounts.push(Mount::ro(&facts.empty_file, chome.join(".gradle").join(f)));
+            // Maven and Gradle keep credentials next to the cache; mask the
+            // named files with an empty read-only file and warn otherwise.
+            let excludes = match c.key {
+                "m2" => Some((&cfg.m2_exclude, "settings.xml", "m2")),
+                "gradle" => Some((&cfg.gradle_exclude, "gradle.properties", "gradle")),
+                _ => None,
+            };
+            if let Some((list, secret, key)) = excludes {
+                if !list.iter().any(|f| f == secret) {
+                    credential_warning(&host, secret, key, warnings);
+                }
+                for f in list {
+                    mounts.push(Mount::ro(&facts.empty_file, target.join(f)));
+                }
             }
         }
-        "rust" => {
-            let cargo = resolve(&cfg.cache_cargo, "cargo");
-            mounts.push(Mount::rw(
-                cargo.join("registry"),
-                chome.join(".cargo").join("registry"),
-            ));
-            mounts.push(Mount::rw(
-                cargo.join("git"),
-                chome.join(".cargo").join("git"),
-            ));
-        }
-        _ => {}
-    }
-    if cfg.node {
-        mounts.push(Mount::rw(
-            resolve(&cfg.cache_npm, "npm"),
-            chome.join(".npm"),
-        ));
-    }
-    if cfg.uv {
-        mounts.push(Mount::rw(
-            resolve(&cfg.cache_uv, "uv"),
-            chome.join(".cache").join("uv"),
-        ));
     }
 }
 
@@ -480,6 +492,7 @@ pub fn execute(
     docker.check()?;
     let facts = HostFacts::gather(paths, cfg)?;
     let git = crate::git::scan(&facts.cwd)?;
+    let chain = toolchain::resolve(&cfg.toolchains)?;
     let builder = Builder {
         docker: &docker,
         paths,
@@ -489,19 +502,17 @@ pub fn execute(
             gid: facts.gid,
             claude_version: cfg.claude_version.clone(),
         },
-        addons: Addons {
-            node: cfg.node,
-            uv: cfg.uv,
-        },
+        toolchains: chain.clone(),
         policy,
     };
-    let image_tag = builder.ensure(&cfg.image, &project_dir(&facts.cwd))?;
+    let image_tag = builder.ensure(cfg.image.as_deref(), &project_dir(&facts.cwd))?;
     let req = RunRequest {
         yolo,
         i_know,
         claude_args,
         image_tag,
         session_id: new_session_id(),
+        toolchains: chain,
     };
     let assembled = assemble(cfg, paths, &facts, &git, &req)?;
     prepare_host_dirs(paths, cfg, &assembled.spec)?;
@@ -556,13 +567,10 @@ pub fn build_only(cfg: &Config, paths: &HostPaths, policy: BuildPolicy) -> Resul
             gid: facts.gid,
             claude_version: cfg.claude_version.clone(),
         },
-        addons: Addons {
-            node: cfg.node,
-            uv: cfg.uv,
-        },
+        toolchains: toolchain::resolve(&cfg.toolchains)?,
         policy,
     };
-    builder.ensure(&cfg.image, &project_dir(&facts.cwd))
+    builder.ensure(cfg.image.as_deref(), &project_dir(&facts.cwd))
 }
 
 /// Claude Code version baked into the base image, if built.
@@ -619,11 +627,21 @@ mod tests {
             claude_args: vec!["-p".into(), "hi".into()],
             image_tag: "claude_here:base".into(),
             session_id: "20260919-120000-abcd".into(),
+            toolchains: vec![],
         }
     }
 
     fn cfg(f: ConfigFile) -> Config {
         f.into()
+    }
+
+    /// `req()` with the given toolchains resolved, as `execute` would.
+    fn req_with(names: &[&str]) -> RunRequest {
+        let owned: Vec<String> = names.iter().map(|s| (*s).to_string()).collect();
+        RunRequest {
+            toolchains: toolchain::resolve(&owned).unwrap_or_default(),
+            ..req()
+        }
     }
 
     #[test]
@@ -711,7 +729,7 @@ mod tests {
     #[test]
     fn env_and_mounts_and_caches() -> Result<()> {
         let c = cfg(ConfigFile {
-            image: Some("jvm".into()),
+            toolchains: vec!["jvm".into()],
             env: vec!["FOO=bar".into(), "HOSTVAR".into()],
             docker_args: vec!["--network".into(), "host".into()],
             mounts: vec![
@@ -736,7 +754,7 @@ mod tests {
             },
             ..Default::default()
         });
-        let a = assemble(&c, &paths(), &facts(), &git(), &req())?;
+        let a = assemble(&c, &paths(), &facts(), &git(), &req_with(&["jvm"]))?;
         let s = a.spec.to_args().join(" ");
         assert!(s.contains("-e FOO=bar"));
         assert!(s.contains("-e HOSTVAR "));
@@ -757,14 +775,14 @@ mod tests {
     #[test]
     fn rust_caches_and_isolated() -> Result<()> {
         let c = cfg(ConfigFile {
-            image: Some("rust".into()),
+            toolchains: vec!["rust".into()],
             caches: crate::config::CachesFile {
                 isolated: Some(true),
                 ..Default::default()
             },
             ..Default::default()
         });
-        let a = assemble(&c, &paths(), &facts(), &git(), &req())?;
+        let a = assemble(&c, &paths(), &facts(), &git(), &req_with(&["rust"]))?;
         let s = a.spec.to_args().join(" ");
         assert!(s.contains(
             "-v /home/axel/.config/claude_here/cache/cargo/registry:/home/ni/.cargo/registry "
@@ -778,11 +796,10 @@ mod tests {
     #[test]
     fn node_and_uv_caches() -> Result<()> {
         let c = cfg(ConfigFile {
-            node: Some(true),
-            uv: Some(true),
+            toolchains: vec!["node".into(), "uv".into()],
             ..Default::default()
         });
-        let a = assemble(&c, &paths(), &facts(), &git(), &req())?;
+        let a = assemble(&c, &paths(), &facts(), &git(), &req_with(&["node", "uv"]))?;
         let s = a.spec.to_args().join(" ");
         assert!(s.contains("-v /home/axel/.npm:/home/ni/.npm "));
         assert!(s.contains("-v /home/axel/.cache/uv:/home/ni/.cache/uv "));

@@ -16,11 +16,10 @@ use crate::paths::{HostPaths, PathRewriter};
 /// Commented starter written when no global config exists.
 pub const CONFIG_TEMPLATE: &str = "\
 # claude_here global configuration. Project files (.claude_here/config.toml)
-# override these values; lists (env, mounts, docker_args) are appended.
+# override these values; lists (toolchains, env, mounts, docker_args) are appended.
 #
-# image = \"base\"              # base | rust | jvm | <custom local image>
-# node = false                  # add Node.js + latest npm/npx (--node / --npm)
-# uv = false                    # add uv/uvx, the fast Python package manager (--uv)
+# toolchains = [\"rust\"]        # see `claude_here toolchains`; any combination
+# image = \"my/dev:latest\"     # custom local image instead of the toolchain chain
 # user = \"ni\"                 # container user name; set to your host user for identical paths
 # git_mode = \"ro\"             # ro | commit | full
 # ssh = false                   # forward ssh agent (git mode full only)
@@ -45,6 +44,11 @@ pub const CONFIG_TEMPLATE: &str = "\
 # cargo = \"~/.cargo\"
 # npm = \"~/.npm\"
 # uv = \"~/.cache/uv\"
+# pip = \"~/.cache/pip\"
+# go = \"~/go/pkg/mod\"
+# pub = \"~/.pub-cache\"
+# conan = \"~/.conan2\"
+# android = \"~/Android/Sdk\"
 # m2_exclude = [\"settings.xml\"]
 # gradle_exclude = [\"gradle.properties\"]
 #

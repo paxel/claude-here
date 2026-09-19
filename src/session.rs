@@ -137,6 +137,8 @@ pub struct SessionInfo {
     pub version: String,
     pub session_id: String,
     pub image: String,
+    /// Enabled toolchains in build order.
+    pub toolchains: Vec<String>,
     pub git_mode: GitMode,
     pub yolo: bool,
     pub user: String,
@@ -161,6 +163,15 @@ impl SessionInfo {
             self.cwd.display(),
             self.user
         );
+        if self.toolchains.is_empty() {
+            s.push_str(
+                "No language toolchain is enabled in this image beyond what the base ships (git, python3, ripgrep, jq, graphviz, build-essential). ",
+            );
+        } else {
+            s.push_str("Enabled toolchains: ");
+            s.push_str(&self.toolchains.join(", "));
+            s.push_str(". Their compilers, package managers and language servers are on PATH. ");
+        }
         match self.git_mode {
             GitMode::Ro => s.push_str(
                 "Git mode is 'ro': every .git directory is bind-mounted read-only and enforced by the kernel. Committing, staging, checking out, switching branches, stashing, resetting and pushing are impossible; do not attempt them, do not try to work around this. Report changed files and let the user commit. ",
@@ -224,6 +235,7 @@ mod tests {
             version: "0".into(),
             session_id: "s".into(),
             image: "claude_here:base".into(),
+            toolchains: vec!["rust".into()],
             git_mode: GitMode::Ro,
             yolo: false,
             user: "ni".into(),
@@ -236,6 +248,7 @@ mod tests {
         };
         let p = info.system_prompt();
         assert!(p.contains("'ro'"));
+        assert!(p.contains("Enabled toolchains: rust"));
         assert!(p.contains("/home/ni/p"));
         assert!(p.contains("recorded"));
     }
