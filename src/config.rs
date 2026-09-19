@@ -249,7 +249,14 @@ pub struct ConfigFile {
     pub mounts: Vec<MountSpec>,
     pub caches: CachesFile,
     pub tls: TlsFile,
+    /// Superseded by `toolchains = ["node"]`. Kept so existing configs load.
+    pub node: Option<bool>,
+    /// Superseded by `toolchains = ["uv"]`. Kept so existing configs load.
+    pub uv: Option<bool>,
 }
+
+/// Names of the toolchains that used to be image variants.
+const LEGACY_VARIANTS: &[&str] = &["rust", "jvm"];
 
 impl ConfigFile {
     /// Load a file; a missing file is an empty layer.
@@ -291,7 +298,9 @@ impl ConfigFile {
             net_retention_days,
             claude_version,
             memory,
-            cpus
+            cpus,
+            node,
+            uv
         );
         self.toolchains.extend(other.toolchains);
         self.env.extend(other.env);
@@ -350,14 +359,49 @@ pub struct Config {
     pub gradle_exclude: Vec<String>,
     pub truststore: Option<String>,
     pub truststore_password: String,
+    /// Notes about superseded configuration keys that were translated.
+    pub legacy_notes: Vec<String>,
+}
+
+/// Translate the pre-0.1.0 keys: `image = "base"|"rust"|"jvm"` selected a
+/// variant, `node`/`uv` were switches. All three are toolchains now.
+fn migrate_legacy(f: &ConfigFile) -> (Option<String>, Vec<String>, Vec<String>) {
+    let mut toolchains = f.toolchains.clone();
+    let mut notes = Vec::new();
+    let mut image = f.image.clone();
+    if let Some(name) = f.image.as_deref() {
+        if name == "base" {
+            notes.push(
+                "image = \"base\" is obsolete; the base image is the default. Remove the key"
+                    .into(),
+            );
+            image = None;
+        } else if LEGACY_VARIANTS.contains(&name) {
+            notes.push(format!(
+                "image = \"{name}\" is obsolete; using toolchains = [\"{name}\"] instead. Update the config or run `claude_here --{name} --save-global`"
+            ));
+            toolchains.push(name.to_string());
+            image = None;
+        }
+    }
+    for (set, name) in [(f.node, "node"), (f.uv, "uv")] {
+        if set == Some(true) {
+            notes.push(format!(
+                "{name} = true is obsolete; using toolchains = [\"{name}\"] instead"
+            ));
+            toolchains.push(name.to_string());
+        }
+    }
+    (image, toolchains, notes)
 }
 
 impl From<ConfigFile> for Config {
     fn from(f: ConfigFile) -> Self {
+        let (image, toolchains, legacy_notes) = migrate_legacy(&f);
         Self {
-            image: f.image,
+            image,
             user: f.user.unwrap_or_else(|| DEFAULT_USER.to_string()),
-            toolchains: f.toolchains,
+            toolchains,
             git_mode: f.git_mode.unwrap_or_default(),
             cloud_mode: f.cloud_mode.unwrap_or_default(),
             net_mode: f.net_mode.unwrap_or_default(),
@@ -382,6 +426,7 @@ impl From<ConfigFile> for Config {
                 .tls
                 .truststore_password
                 .unwrap_or_else(|| "changeit".to_string()),
+            legacy_notes,
         }
     }
 }
@@ -536,6 +581,30 @@ isolated = true
         assert_eq!(c.mounts.len(), 2);
         assert_eq!(c.mounts[1].mode, MountMode::Rw);
         assert!(c.caches_isolated);
+    }
+
+    #[test]
+    fn legacy_keys_become_toolchains() {
+        let f: ConfigFile =
+            toml::from_str("node = true\nuv = true\nimage = \"rust\"\n").unwrap_or_default();
+        let c: Config = f.into();
+        assert_eq!(c.image, None);
+        assert_eq!(c.toolchains, vec!["rust", "node", "uv"]);
+        assert_eq!(c.legacy_notes.len(), 3);
+
+        let c: Config = toml::from_str::<ConfigFile>("image = \"base\"\n")
+            .unwrap_or_default()
+            .into();
+        assert_eq!(c.image, None);
+        assert!(c.toolchains.is_empty());
+        assert_eq!(c.legacy_notes.len(), 1);
+
+        // A custom image keeps its meaning and produces no note.
+        let c: Config = toml::from_str::<ConfigFile>("image = \"my/dev:latest\"\n")
+            .unwrap_or_default()
+            .into();
+        assert_eq!(c.image.as_deref(), Some("my/dev:latest"));
+        assert!(c.legacy_notes.is_empty());
     }
 
     #[test]

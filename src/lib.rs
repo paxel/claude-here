@@ -209,6 +209,9 @@ fn config_command(paths: &HostPaths, action: ConfigAction) -> Result<()> {
             let merged = layers.global.clone().merged_with(layers.project.clone());
             print!("{}", toml::to_string_pretty(&merged)?);
             let effective = layers.resolve(ConfigFile::default());
+            for note in &effective.legacy_notes {
+                println!("# obsolete: {note}");
+            }
             let chain = toolchain::resolve(&effective.toolchains)?;
             println!(
                 "# effective: image={} toolchains={} user={} git_mode={} cloud_mode={} net_mode={} net_capture={}",

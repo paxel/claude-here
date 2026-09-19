@@ -194,6 +194,11 @@ If the current directory is a subdirectory of a repository, the repository's
 `.git` is outside the mount; Claude sees plain files without git. Nested
 repositories below the current directory are protected as well.
 
+Configurations written before toolchains existed still load: `node = true`,
+`uv = true` and `image = "base"`/`"rust"`/`"jvm"` are translated into the
+matching toolchains and reported as obsolete at start. `claude_here config show`
+lists what it translated; `claude_here --rust --save-global` writes the new form.
+
 ### Cloud modes
 
 Same shape as the git modes, default `none`. Installing `kubectl` is trivial;

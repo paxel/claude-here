@@ -161,7 +161,7 @@ pub fn assemble(
     };
     let rw = PathRewriter::new(&paths.home, &cfg.user);
     let chome = rw.container_home().to_path_buf();
-    let mut warnings = Vec::new();
+    let mut warnings = cfg.legacy_notes.clone();
     let mut mounts = Vec::new();
     let mut env: Vec<(String, String)> = Vec::new();
 

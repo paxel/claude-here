@@ -8,7 +8,7 @@ Initial release.
 * Git modes `ro` (kernel-enforced read-only `.git`), `commit` (git shim allowlist) and `full`.
 * Long-lived token auth via `claude setup-token`, persistent container `~/.claude` seeded from the host.
 * Explicit mounts, environment allowlist, host cache mounts for Maven/Gradle/Cargo, JVM trust store wiring.
-* Composable toolchains instead of image variants: `rust`, `jvm`, `dart`, `node`, `python`, `go`, `cpp`, `uv`, `android`, `docs`, `k8s`, `terraform`, `aws`, `gcloud`, `azure`, each its own layer in a fixed build order, with its own host caches, language server and egress domains; `android` implies `jvm`, `python` implies `node` and `uv`. `--image` now only selects a custom local image. `claude_here toolchains` lists them.
+* Composable toolchains instead of image variants: `rust`, `jvm`, `dart`, `node`, `python`, `go`, `cpp`, `uv`, `android`, `docs`, `k8s`, `terraform`, `aws`, `gcloud`, `azure`, each its own layer in a fixed build order, with its own host caches, language server and egress domains; `android` implies `jvm`, `python` implies `node` and `uv`. `--image` now only selects a custom local image. `claude_here toolchains` lists them. Existing configs keep loading: `node = true`, `uv = true` and `image = "base"|"rust"|"jvm"` are translated into toolchains and reported as obsolete at start.
 * Language servers ship with their toolchain (rust-analyzer, jdtls, pyright, gopls, clangd, typescript-language-server, dart), so Claude Code's LSP tool works in the sandbox.
 * `graphviz` added to the base image (changes the base hash; rebuild on first run).
 * Global and per-project user Dockerfile layers, hash-based rebuilds, `update`.

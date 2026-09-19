@@ -19,6 +19,8 @@ pub const CONFIG_TEMPLATE: &str = "\
 # override these values; lists (toolchains, env, mounts, docker_args) are appended.
 #
 # toolchains = [\"rust\"]        # see `claude_here toolchains`; any combination
+# (`node = true`, `uv = true` and `image = \"rust\"|\"jvm\"|\"base\"` still load and
+#  are translated into toolchains, with a note at start)
 # image = \"my/dev:latest\"     # custom local image instead of the toolchain chain
 # user = \"ni\"                 # container user name; set to your host user for identical paths
 # git_mode = \"ro\"             # ro | commit | full
