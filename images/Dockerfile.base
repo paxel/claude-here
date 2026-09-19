@@ -48,11 +48,18 @@ RUN curl -fsSL https://claude.ai/install.sh | bash -s -- "${CLAUDE_VERSION}" \
  && "/home/${CH_USER}/.local/bin/claude" --version
 USER root
 
-ENV PATH="/home/${CH_USER}/.local/bin:${PATH}"
+ENV PATH="/usr/local/lib/claude_here/shims:/home/${CH_USER}/.local/bin:${PATH}"
 
-COPY entrypoint.sh net-summary.sh /usr/local/lib/claude_here/
+COPY entrypoint.sh net-summary.sh cloud-shim.sh /usr/local/lib/claude_here/
 COPY git-shim.sh /usr/local/bin/git
 RUN chmod 755 /usr/local/lib/claude_here/*.sh /usr/local/bin/git
+
+# Cloud shims live in a directory that comes first on PATH, so they are found
+# before the real binaries a cloud toolchain installs into /usr/local/bin.
+RUN mkdir -p /usr/local/lib/claude_here/shims \
+ && for t in kubectl helm terraform aws gcloud az; do \
+      ln -s /usr/local/lib/claude_here/cloud-shim.sh "/usr/local/lib/claude_here/shims/$t"; \
+    done
 
 LABEL claude_here.user="${CH_USER}" \
       claude_here.uid="${CH_UID}" \

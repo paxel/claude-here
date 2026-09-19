@@ -12,6 +12,7 @@ Initial release.
 * Language servers ship with their toolchain (rust-analyzer, jdtls, pyright, gopls, clangd, typescript-language-server, dart), so Claude Code's LSP tool works in the sandbox.
 * `graphviz` added to the base image (changes the base hash; rebuild on first run).
 * Global and per-project user Dockerfile layers, hash-based rebuilds, `update`.
+* Cloud modes `none` (default, no credentials mounted), `ro` (verb-allowlisting shims for kubectl/helm/terraform/aws/gcloud/az) and `full`, published to `/etc/claude_here/cloud_mode` by the root phase; `~/.kube`, `~/.aws`, `~/.config/gcloud` and `~/.azure` are mounted read-only when the matching toolchain is enabled. `claude_yolo --cloud full` needs `--i-know`.
 * MCP servers are opt-in per project (`mcp = [...]` / `--mcp NAME`); `mcpServers` is no longer seeded from the host `.claude.json`.
 * Per-session network capture inside the container with `tshark` summaries; `net last|show|top|grep|shark|list|prune`.
 * TOML configuration (global < project < CLI), `config show|set|path`, `--save`.

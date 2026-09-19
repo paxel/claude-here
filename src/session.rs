@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::GitMode;
+use crate::config::{CloudMode, GitMode};
 
 /// Civil date/time from unix seconds (UTC), no external crate needed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +142,7 @@ pub struct SessionInfo {
     /// MCP servers granted for this session. Nothing is inherited from the host.
     pub mcp: Vec<String>,
     pub git_mode: GitMode,
+    pub cloud_mode: CloudMode,
     pub yolo: bool,
     pub user: String,
     pub cwd_host: PathBuf,
@@ -182,6 +183,17 @@ impl SessionInfo {
                 "Git mode is 'commit': you may inspect, stage and commit locally. Checkout, switch, branch creation, reset, rebase, merge, stash, tag and any remote operation are denied by the git wrapper; do not attempt them or bypass the wrapper. ",
             ),
             GitMode::Full => s.push_str("Git mode is 'full': git is unrestricted. "),
+        }
+        match self.cloud_mode {
+            CloudMode::None => s.push_str(
+                "Cloud mode is 'none': no cloud credentials are mounted. kubectl, helm, terraform and the vendor CLIs can render and validate manifests and IaC, but no live cluster or account is reachable; do not try to reach one. ",
+            ),
+            CloudMode::Ro => s.push_str(
+                "Cloud mode is 'ro': cloud credentials are mounted and the cloud CLIs are wrapped so that only read verbs run. Anything that mutates infrastructure is denied, as are 'kubectl exec' and 'port-forward'; do not attempt them or bypass the wrapper. ",
+            ),
+            CloudMode::Full => s.push_str(
+                "Cloud mode is 'full': the cloud CLIs are unrestricted and can change live infrastructure. Be correspondingly careful and confirm destructive operations with the user. ",
+            ),
         }
         if !self.mcp.is_empty() {
             s.push_str("MCP server(s) granted for this session: ");
@@ -245,6 +257,7 @@ mod tests {
             toolchains: vec!["rust".into()],
             mcp: vec![],
             git_mode: GitMode::Ro,
+            cloud_mode: CloudMode::None,
             yolo: false,
             user: "ni".into(),
             cwd_host: "/home/axel/p".into(),
@@ -257,6 +270,7 @@ mod tests {
         let p = info.system_prompt();
         assert!(p.contains("'ro'"));
         assert!(p.contains("Enabled toolchains: rust"));
+        assert!(p.contains("Cloud mode is 'none'"));
         assert!(p.contains("/home/ni/p"));
         assert!(p.contains("recorded"));
     }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Root phase of every claude_here session:
-#   1. publish the git mode where the sandbox user cannot change it
+#   1. publish the git and cloud modes where the sandbox user cannot change them
 #   2. start the packet capture as user `netlog`
 #   3. drop to the sandbox user and run the command
 #   4. on exit, stop the capture, summarize and hand the files to the host
@@ -8,6 +8,7 @@ set -euo pipefail
 
 : "${CH_USER:?}" "${CH_UID:?}" "${CH_GID:?}" "${CH_SESSION_ID:?}"
 CH_GIT_MODE="${CH_GIT_MODE:-ro}"
+CH_CLOUD_MODE="${CH_CLOUD_MODE:-none}"
 CH_NET_CAPTURE="${CH_NET_CAPTURE:-1}"
 CAP_DIR=/var/log/claude_here
 OUT_DIR=/var/log/claude_here_out
@@ -23,7 +24,8 @@ fi
 
 mkdir -p /etc/claude_here
 printf '%s\n' "${CH_GIT_MODE}" > /etc/claude_here/git_mode
-chmod 644 /etc/claude_here/git_mode
+printf '%s\n' "${CH_CLOUD_MODE}" > /etc/claude_here/cloud_mode
+chmod 644 /etc/claude_here/git_mode /etc/claude_here/cloud_mode
 
 TCPDUMP_PID=""
 if [ "${CH_NET_CAPTURE}" = "1" ]; then

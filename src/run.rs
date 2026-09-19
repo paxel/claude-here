@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::{Config, GitMode, MountMode};
+use crate::config::{CloudMode, Config, GitMode, MountMode};
 use crate::docker::{Docker, Mount, RunSpec, uses_host_network};
 use crate::git::GitLayout;
 use crate::image::{self, BuildPolicy, Builder, Identity};
@@ -35,6 +35,9 @@ pub struct HostFacts {
     pub token_file: Option<PathBuf>,
     /// Absolute host path of an empty file used to mask excluded cache files.
     pub empty_file: PathBuf,
+    /// Credential directories of the shipped cloud toolchains that exist on
+    /// this host. Gathered here so `assemble` stays pure.
+    pub cloud_dirs: Vec<PathBuf>,
 }
 
 impl HostFacts {
@@ -59,6 +62,12 @@ impl HostFacts {
                 .flatten(),
             token_file: exists(paths.token_file()),
             empty_file,
+            cloud_dirs: toolchain::TOOLCHAINS
+                .iter()
+                .flat_map(|t| t.credentials.iter())
+                .map(|(host, _)| paths.expand_tilde(host))
+                .filter(|p| p.exists())
+                .collect(),
         })
     }
 }
@@ -134,6 +143,9 @@ pub fn assemble(
     if req.yolo && cfg.git_mode == GitMode::Full && !req.i_know {
         bail!("claude_yolo with git mode 'full' refused; pass --i-know to override");
     }
+    if req.yolo && cfg.cloud_mode == CloudMode::Full && !req.i_know {
+        bail!("claude_yolo with cloud mode 'full' refused; pass --i-know to override");
+    }
     let Some(token_file) = facts.token_file.clone() else {
         bail!(
             "no token at {}; run `claude_here init` first",
@@ -182,6 +194,15 @@ pub fn assemble(
     add_truststore(cfg, paths, &chome, &mut mounts, &mut env);
 
     let (ssh, gh) = add_ssh_gh(cfg, facts, &chome, &mut mounts, &mut env, &mut warnings);
+    add_cloud_credentials(
+        cfg,
+        paths,
+        facts,
+        &chome,
+        &req.toolchains,
+        &mut mounts,
+        &mut warnings,
+    );
 
     let env_passthrough = add_env(cfg, facts, req, &chome, net_capture, &mut env);
 
@@ -246,6 +267,7 @@ fn session_info(
         toolchains: toolchain::names(&req.toolchains),
         mcp: req.mcp.clone(),
         git_mode: cfg.git_mode,
+        cloud_mode: cfg.cloud_mode,
         yolo: req.yolo,
         user: cfg.user.clone(),
         cwd_host: facts.cwd.clone(),
@@ -323,6 +345,7 @@ fn add_env(
         ("CH_GID".to_string(), facts.gid.to_string()),
         ("CH_SESSION_ID".to_string(), req.session_id.clone()),
         ("CH_GIT_MODE".to_string(), cfg.git_mode.to_string()),
+        ("CH_CLOUD_MODE".to_string(), cfg.cloud_mode.to_string()),
         (
             "CH_NET_CAPTURE".to_string(),
             if net_capture { "1" } else { "0" }.to_string(),
@@ -390,6 +413,52 @@ fn add_ssh_gh(
         }
     }
     (ssh, gh)
+}
+
+/// Cloud credentials are mounted only when the mode allows it, and only for the
+/// toolchains that are actually enabled. In `ro` the shims restrict the verbs;
+/// real enforcement is the user's RBAC/IAM (ADR 0005).
+fn add_cloud_credentials(
+    cfg: &Config,
+    paths: &HostPaths,
+    facts: &HostFacts,
+    chome: &Path,
+    chain: &[&Toolchain],
+    mounts: &mut Vec<Mount>,
+    warnings: &mut Vec<String>,
+) {
+    let wanted = toolchain::credentials(chain);
+    if cfg.cloud_mode == CloudMode::None {
+        if !wanted.is_empty() {
+            warnings.push(
+                "cloud mode is 'none': no credentials mounted, so cloud tools can render and validate but not reach a live system"
+                    .into(),
+            );
+        }
+        return;
+    }
+    if wanted.is_empty() {
+        warnings.push(format!(
+            "cloud mode '{}' has no effect: no cloud toolchain is enabled",
+            cfg.cloud_mode
+        ));
+        return;
+    }
+    for (host, container) in wanted {
+        let host = paths.expand_tilde(host);
+        if !facts.cloud_dirs.contains(&host) {
+            warnings.push(format!("{} does not exist; skipped", host.display()));
+            continue;
+        }
+        // Read-only: it protects the file, never the account. The mode does.
+        mounts.push(Mount::ro(host, chome.join(container)));
+    }
+    if cfg.cloud_mode == CloudMode::Full {
+        warnings.push(
+            "cloud mode 'full': cloud CLIs are unrestricted and can change live infrastructure"
+                .into(),
+        );
+    }
 }
 
 fn add_cache_mounts(
@@ -544,11 +613,12 @@ pub fn execute(
         format!(" | mcp {}", req.mcp.join(","))
     };
     eprintln!(
-        "claude_here: session {} | image {} | git {}{}{mcp} | net {}{}",
+        "claude_here: session {} | image {} | git {}{} | cloud {}{mcp} | net {}{}",
         req.session_id,
         assembled.info.image,
         cfg.git_mode,
         protected,
+        cfg.cloud_mode,
         if assembled.info.net_capture {
             "recorded"
         } else {
@@ -629,6 +699,7 @@ mod tests {
             gh_token: Some("gho_test".into()),
             token_file: Some("/home/axel/.config/claude_here/token".into()),
             empty_file: "/home/axel/.config/claude_here/empty".into(),
+            cloud_dirs: vec![],
         }
     }
 
@@ -824,6 +895,60 @@ mod tests {
         assert!(s.contains("-v /home/axel/.npm:/home/ni/.npm "));
         assert!(s.contains("-v /home/axel/.cache/uv:/home/ni/.cache/uv "));
         Ok(())
+    }
+
+    #[test]
+    fn cloud_none_mounts_no_credentials() -> Result<()> {
+        let c = cfg(ConfigFile {
+            toolchains: vec!["k8s".into()],
+            ..Default::default()
+        });
+        let a = assemble(&c, &paths(), &facts(), &git(), &req_with(&["k8s"]))?;
+        let s = a.spec.to_args().join(" ");
+        assert!(!s.contains(".kube"));
+        assert!(s.contains("-e CH_CLOUD_MODE=none"));
+        assert!(a.warnings.iter().any(|w| w.contains("not reach a live")));
+        Ok(())
+    }
+
+    #[test]
+    fn cloud_ro_mounts_credentials_read_only() -> Result<()> {
+        let c = cfg(ConfigFile {
+            toolchains: vec!["k8s".into()],
+            cloud_mode: Some(crate::config::CloudMode::Ro),
+            ..Default::default()
+        });
+        let mut f = facts();
+        f.cloud_dirs = vec!["/home/axel/.kube".into()];
+        let a = assemble(&c, &paths(), &f, &git(), &req_with(&["k8s"]))?;
+        let s = a.spec.to_args().join(" ");
+        assert!(s.contains("-v /home/axel/.kube:/home/ni/.kube:ro"));
+        assert!(s.contains("-e CH_CLOUD_MODE=ro"));
+        Ok(())
+    }
+
+    #[test]
+    fn cloud_mode_without_a_cloud_toolchain_warns() -> Result<()> {
+        let c = cfg(ConfigFile {
+            cloud_mode: Some(crate::config::CloudMode::Ro),
+            ..Default::default()
+        });
+        let a = assemble(&c, &paths(), &facts(), &git(), &req())?;
+        assert!(a.warnings.iter().any(|w| w.contains("no effect")));
+        Ok(())
+    }
+
+    #[test]
+    fn yolo_cloud_full_refused_without_i_know() {
+        let c = cfg(ConfigFile {
+            cloud_mode: Some(crate::config::CloudMode::Full),
+            ..Default::default()
+        });
+        let mut r = req();
+        r.yolo = true;
+        assert!(assemble(&c, &paths(), &facts(), &git(), &r).is_err());
+        r.i_know = true;
+        assert!(assemble(&c, &paths(), &facts(), &git(), &r).is_ok());
     }
 
     #[test]

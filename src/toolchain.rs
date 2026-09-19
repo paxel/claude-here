@@ -50,6 +50,9 @@ pub struct Toolchain {
     /// Hosts this toolchain needs when the egress allowlist is on.
     pub domains: &'static [&'static str],
     pub lsp: &'static [Lsp],
+    /// Host credential directories mounted when the cloud mode is not `none`.
+    /// `(host path, container path relative to the container home)`.
+    pub credentials: &'static [(&'static str, &'static str)],
 }
 
 const NODE: &str = include_str!("../images/toolchains/node.dockerfile");
@@ -100,6 +103,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
                 (".cts", "typescript"),
             ],
         }],
+        credentials: &[],
     },
     Toolchain {
         name: "uv",
@@ -121,6 +125,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             "github.com",
         ],
         lsp: &[],
+        credentials: &[],
     },
     Toolchain {
         name: "python",
@@ -142,6 +147,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             args: &["--stdio"],
             extensions: &[(".py", "python"), (".pyi", "python")],
         }],
+        credentials: &[],
     },
     Toolchain {
         name: "jvm",
@@ -178,6 +184,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             args: &[],
             extensions: &[(".java", "java")],
         }],
+        credentials: &[],
     },
     Toolchain {
         name: "android",
@@ -194,6 +201,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         }],
         domains: &["dl.google.com", "maven.google.com", "services.gradle.org"],
         lsp: &[],
+        credentials: &[],
     },
     Toolchain {
         name: "rust",
@@ -221,6 +229,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             args: &[],
             extensions: &[(".rs", "rust")],
         }],
+        credentials: &[],
     },
     Toolchain {
         name: "go",
@@ -247,6 +256,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             args: &[],
             extensions: &[(".go", "go")],
         }],
+        credentials: &[],
     },
     Toolchain {
         name: "cpp",
@@ -276,6 +286,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
                 (".hxx", "cpp"),
             ],
         }],
+        credentials: &[],
     },
     Toolchain {
         name: "dart",
@@ -302,6 +313,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             args: &["language-server", "--protocol=lsp"],
             extensions: &[(".dart", "dart")],
         }],
+        credentials: &[],
     },
     Toolchain {
         name: "docs",
@@ -313,6 +325,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         caches: &[],
         domains: &["github.com", "objects.githubusercontent.com"],
         lsp: &[],
+        credentials: &[],
     },
     Toolchain {
         name: "k8s",
@@ -329,6 +342,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             "storage.googleapis.com",
         ],
         lsp: &[],
+        credentials: &[("~/.kube", ".kube")],
     },
     Toolchain {
         name: "terraform",
@@ -340,6 +354,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         caches: &[],
         domains: &["releases.hashicorp.com", "registry.terraform.io"],
         lsp: &[],
+        credentials: &[],
     },
     Toolchain {
         name: "aws",
@@ -351,6 +366,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         caches: &[],
         domains: &["awscli.amazonaws.com"],
         lsp: &[],
+        credentials: &[("~/.aws", ".aws")],
     },
     Toolchain {
         name: "gcloud",
@@ -362,6 +378,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         caches: &[],
         domains: &["dl.google.com", "googleapis.com"],
         lsp: &[],
+        credentials: &[("~/.config/gcloud", ".config/gcloud")],
     },
     Toolchain {
         name: "azure",
@@ -373,6 +390,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         caches: &[],
         domains: &["pypi.org", "files.pythonhosted.org"],
         lsp: &[],
+        credentials: &[("~/.azure", ".azure")],
     },
 ];
 
@@ -436,6 +454,14 @@ pub fn domains(chain: &[&Toolchain]) -> Vec<String> {
         }
     }
     v
+}
+
+/// Credential directories the chain wants when the cloud mode allows them.
+pub fn credentials(chain: &[&Toolchain]) -> Vec<(&'static str, &'static str)> {
+    chain
+        .iter()
+        .flat_map(|t| t.credentials.iter().copied())
+        .collect()
 }
 
 #[cfg(test)]
@@ -502,6 +528,24 @@ mod tests {
                 t.order
             );
         }
+    }
+
+    #[test]
+    fn only_cloud_toolchains_carry_credentials() {
+        for t in TOOLCHAINS {
+            let expected = matches!(t.name, "k8s" | "aws" | "gcloud" | "azure");
+            assert_eq!(
+                !t.credentials.is_empty(),
+                expected,
+                "{} credentials",
+                t.name
+            );
+        }
+        let chain = resolve(&["k8s".to_string(), "aws".to_string()]).unwrap_or_default();
+        assert_eq!(
+            credentials(&chain),
+            vec![("~/.kube", ".kube"), ("~/.aws", ".aws")]
+        );
     }
 
     #[test]

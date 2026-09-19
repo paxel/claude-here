@@ -191,6 +191,38 @@ If the current directory is a subdirectory of a repository, the repository's
 `.git` is outside the mount; Claude sees plain files without git. Nested
 repositories below the current directory are protected as well.
 
+### Cloud modes
+
+Same shape as the git modes, default `none`. Installing `kubectl` is trivial;
+deciding what a mounted kubeconfig means is not, because there is no kernel
+equivalent for a cluster: a read-only mount of `~/.kube/config` protects the
+file, not the account.
+
+| Mode | Enforcement | What Claude can do |
+|------|-------------|--------------------|
+| `none` (default) | no credentials are mounted at all | write, render and validate: `helm template`, `kustomize build`, `terraform validate`, edit manifests and IaC. No live system is reachable |
+| `ro` | shims at the front of `PATH` for `kubectl`, `helm`, `terraform`, `aws`, `gcloud`, `az` | read verbs: `get`, `describe`, `logs`, `top`, `plan`, `template`, `list`… Denied: every mutation, and `kubectl exec`/`port-forward` — arbitrary execution in a pod and a network bridge |
+| `full` | none | everything, including destroying infrastructure |
+
+```sh
+claude_here --k8s                            # tools, no credentials
+claude_here --k8s --cloud ro                 # ~/.kube mounted, read verbs only
+claude_here --terraform --aws --cloud full   # unrestricted
+claude_yolo --cloud full --i-know            # yolo + full needs the opt-in
+```
+
+Credentials need no flags of their own: `~/.kube` is mounted when `k8s` is
+enabled and the mode is not `none`, and likewise `~/.aws`, `~/.config/gcloud`
+and `~/.azure` with their toolchains. The mode is written by the root phase to
+`/etc/claude_here/cloud_mode`, where the sandbox user cannot change it, and it
+is stated in the appended system prompt.
+
+Like `commit` git mode, `ro` is a guard rail, not a boundary — the real binary
+can still be called by its absolute path. Actual enforcement belongs on the
+other side: a kubeconfig context bound to a read-only service account, an IAM
+role with a read-only policy. What you do get for free is the audit trail: every
+cloud API call shows up in `claude_here net last`.
+
 ### Paths inside the container
 
 The working directory is mounted at the same path with your host home prefix
@@ -355,7 +387,7 @@ Every session also prints one line at exit
 
 ```json
 {"tool":"claude_here","version":"0.1.0","session_id":"20260919-095014-8865",
- "image":"claude_here:base-u1000","toolchains":[],"mcp":[],"git_mode":"ro","yolo":false,"user":"ni",
+ "image":"claude_here:base-u1000","toolchains":[],"mcp":[],"git_mode":"ro","cloud_mode":"none","yolo":false,"user":"ni",
  "cwd_host":"/home/axel/src/foo","cwd":"/home/ni/src/foo",
  "mounts":[{"host":"/home/axel/src/foo","container":"/home/ni/src/foo","mode":"rw"},
            {"host":"/home/axel/src/foo/.git","container":"/home/ni/src/foo/.git","mode":"ro"}],
