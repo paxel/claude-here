@@ -14,6 +14,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=en_US.UTF-8 \
     DISABLE_AUTOUPDATER=1
 
+# Transient network failures must not throw away a long image build.
+RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' \
+      > /etc/apt/apt.conf.d/80-claude-here-retries
+
 RUN echo 'wireshark-common wireshark-common/install-setuid boolean false' | debconf-set-selections \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -32,8 +36,10 @@ RUN echo 'wireshark-common wireshark-common/install-setuid boolean false' | debc
 # termshark for `claude_here net shark`
 RUN arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) ts=x64 ;; arm64) ts=arm64 ;; *) echo "unsupported arch $arch"; exit 1 ;; esac; \
-    curl -fsSL "https://github.com/gcla/termshark/releases/download/v${TERMSHARK_VERSION}/termshark_${TERMSHARK_VERSION}_linux_${ts}.tar.gz" \
-      | tar -xz -C /usr/local/bin --strip-components=1 --wildcards '*/termshark'
+    curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 -o /tmp/termshark.tar.gz \
+      "https://github.com/gcla/termshark/releases/download/v${TERMSHARK_VERSION}/termshark_${TERMSHARK_VERSION}_linux_${ts}.tar.gz" \
+ && tar -xzf /tmp/termshark.tar.gz -C /usr/local/bin --strip-components=1 --wildcards '*/termshark' \
+ && rm /tmp/termshark.tar.gz
 
 # Unprivileged user matching the host uid/gid, plus a separate user that owns
 # the packet capture so the sandbox user cannot tamper with it.
@@ -45,7 +51,7 @@ RUN (getent group "${CH_GID}" >/dev/null || groupadd -g "${CH_GID}" "${CH_USER}"
 
 # Claude Code native binary, installed into the sandbox user's home.
 USER ${CH_USER}
-RUN curl -fsSL https://claude.ai/install.sh | bash -s -- "${CLAUDE_VERSION}" \
+RUN curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 https://claude.ai/install.sh | bash -s -- "${CLAUDE_VERSION}" \
  && "/home/${CH_USER}/.local/bin/claude" --version
 USER root
 

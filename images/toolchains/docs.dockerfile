@@ -22,20 +22,23 @@ RUN arch="$(dpkg --print-architecture)"; \
       *) echo "unsupported arch $arch"; exit 1 ;; \
     esac; \
     mkdir -p /opt/plantuml \
- && curl -fsSL -o /opt/plantuml/plantuml.jar \
+ && curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 -o /opt/plantuml/plantuml.jar \
       "https://github.com/plantuml/plantuml/releases/download/v${PLANTUML_VERSION}/plantuml-${PLANTUML_VERSION}.jar" \
  && printf '#!/bin/sh\nexec java -jar /opt/plantuml/plantuml.jar "$@"\n' > /usr/local/bin/plantuml \
  && chmod 755 /usr/local/bin/plantuml \
- && curl -fsSL "https://github.com/terrastruct/d2/releases/download/v${D2_VERSION}/d2-v${D2_VERSION}-linux-${d2}.tar.gz" \
-      | tar -xz -C /tmp \
+ && curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 -o /tmp/d2.tar.gz \
+      "https://github.com/terrastruct/d2/releases/download/v${D2_VERSION}/d2-v${D2_VERSION}-linux-${d2}.tar.gz" \
+ && tar -xzf /tmp/d2.tar.gz -C /tmp && rm /tmp/d2.tar.gz \
  && install -m 755 "/tmp/d2-v${D2_VERSION}/bin/d2" /usr/local/bin/d2 \
  && rm -rf "/tmp/d2-v${D2_VERSION}" \
- && curl -fsSL "https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/typst-${ty}-unknown-linux-musl.tar.xz" \
-      | tar -xJ -C /tmp \
+ && curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 -o /tmp/typst.tar.xz \
+      "https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/typst-${ty}-unknown-linux-musl.tar.xz" \
+ && tar -xJf /tmp/typst.tar.xz -C /tmp && rm /tmp/typst.tar.xz \
  && install -m 755 "/tmp/typst-${ty}-unknown-linux-musl/typst" /usr/local/bin/typst \
  && rm -rf "/tmp/typst-${ty}-unknown-linux-musl" \
- && curl -fsSL "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-linux-${pd}.tar.gz" \
-      | tar -xz -C /tmp \
+ && curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 -o /tmp/pandoc.tar.gz \
+      "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-linux-${pd}.tar.gz" \
+ && tar -xzf /tmp/pandoc.tar.gz -C /tmp && rm /tmp/pandoc.tar.gz \
  && install -m 755 "/tmp/pandoc-${PANDOC_VERSION}/bin/pandoc" /usr/local/bin/pandoc \
  && rm -rf "/tmp/pandoc-${PANDOC_VERSION}" \
  && plantuml -version && d2 --version && typst --version && pandoc --version | head -1

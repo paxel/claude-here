@@ -6,7 +6,7 @@ ARG TERRAFORM_VERSION=1.10.5
 
 RUN arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) a=amd64 ;; arm64) a=arm64 ;; *) echo "unsupported arch $arch"; exit 1 ;; esac; \
-    curl -fsSL -o /tmp/tf.zip \
+    curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 -o /tmp/tf.zip \
       "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${a}.zip" \
  && unzip -q /tmp/tf.zip -d /usr/local/bin && rm /tmp/tf.zip \
  && chmod 755 /usr/local/bin/terraform \

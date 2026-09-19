@@ -5,7 +5,7 @@ ARG CH_USER=ni
 USER ${CH_USER}
 ENV RUSTUP_HOME=/home/${CH_USER}/.rustup \
     CARGO_HOME=/home/${CH_USER}/.cargo
-RUN curl -fsSL https://sh.rustup.rs \
+RUN curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 https://sh.rustup.rs \
       | sh -s -- -y --profile minimal --component clippy,rustfmt,rust-analyzer \
  && /home/${CH_USER}/.cargo/bin/cargo --version \
  && /home/${CH_USER}/.cargo/bin/rust-analyzer --version

@@ -375,6 +375,33 @@ mod tests {
         }
     }
 
+    /// A toolchain build is long; one transient DNS or TLS failure must not
+    /// discard it. Every download therefore retries.
+    #[test]
+    fn every_download_retries() {
+        let mut files: Vec<(&str, &str)> = vec![
+            ("Dockerfile.base", DOCKERFILE_BASE),
+            ("net-allowlist.sh", NET_ALLOWLIST),
+        ];
+        for t in crate::toolchain::TOOLCHAINS {
+            files.push((t.name, t.dockerfile));
+        }
+        for (name, text) in files {
+            for (n, line) in text.lines().enumerate() {
+                let line = line.trim();
+                // Only actual invocations, not the apt package named "curl".
+                if !line.contains("curl -") || line.starts_with('#') {
+                    continue;
+                }
+                assert!(
+                    line.contains("--retry") || line.contains("${CH_CURL}"),
+                    "{name}:{} downloads without retrying: {line}",
+                    n + 1
+                );
+            }
+        }
+    }
+
     #[test]
     fn hash_is_stable_and_sensitive() {
         let a = hash_inputs(&["x", "y"]);

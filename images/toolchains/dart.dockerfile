@@ -6,8 +6,13 @@ FROM ${BASE}
 ARG CH_USER=ni
 ARG FLUTTER_CHANNEL=stable
 
-RUN git clone --depth 1 --branch "${FLUTTER_CHANNEL}" \
-      https://github.com/flutter/flutter.git /opt/flutter \
+RUN for attempt in 1 2 3; do \
+      rm -rf /opt/flutter; \
+      git clone --depth 1 --branch "${FLUTTER_CHANNEL}" \
+        https://github.com/flutter/flutter.git /opt/flutter && break; \
+      echo "flutter clone attempt ${attempt} failed; retrying"; sleep 5; \
+    done \
+ && test -d /opt/flutter/bin \
  && chown -R "${CH_USER}" /opt/flutter
 ENV FLUTTER_ROOT=/opt/flutter \
     PUB_CACHE=/home/${CH_USER}/.pub-cache \

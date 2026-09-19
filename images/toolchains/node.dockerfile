@@ -4,7 +4,7 @@ ARG BASE=claude_here:base
 FROM ${BASE}
 ARG NODE_MAJOR=22
 
-RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
+RUN curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g npm@latest pnpm yarn typescript typescript-language-server \
