@@ -31,6 +31,12 @@ pub struct RunFlags {
     /// Image variant (base, rust, jvm) or a custom local image name.
     #[arg(long, value_name = "NAME")]
     pub image: Option<String>,
+    /// Add Node.js with the latest npm/npx to the image (alias: --npm).
+    #[arg(long, visible_alias = "npm")]
+    pub node: bool,
+    /// Add uv/uvx (fast Python package manager) to the image.
+    #[arg(long)]
+    pub uv: bool,
     /// Mount a host path read-only (`path` or `host:container`). Repeatable.
     #[arg(long, value_name = "PATH")]
     pub mount: Vec<String>,
@@ -97,6 +103,8 @@ impl RunFlags {
         mounts.extend(self.mount_rw.iter().map(|m| parse_mount(m, MountMode::Rw)));
         ConfigFile {
             image: self.image.clone(),
+            node: self.node.then_some(true),
+            uv: self.uv.then_some(true),
             git_mode: self.git,
             ssh: self.ssh.then_some(true),
             gh: self.gh.then_some(true),
@@ -282,6 +290,9 @@ const VALUE_FLAGS: &[&str] = &[
 ];
 /// Tool flags without a value.
 const BOOL_FLAGS: &[&str] = &[
+    "--node",
+    "--npm",
+    "--uv",
     "--ssh",
     "--gh",
     "--no-net-log",
@@ -374,6 +385,18 @@ mod tests {
         assert_eq!(s.tool, v(&["--rebuild"]));
         assert_eq!(s.claude, v(&["--image", "x", "--help"]));
         assert!(!s.wants_help);
+    }
+
+    #[test]
+    fn npm_alias_is_a_tool_flag() {
+        let s = split_args(v(&["--npm", "--uv", "-p", "x"]));
+        assert_eq!(s.tool, v(&["--npm", "--uv"]));
+        let mut argv = vec!["claude_here".to_string()];
+        argv.extend(s.tool);
+        let f = RunFlags::try_parse_from(argv).map_err(|e| e.to_string());
+        let Ok(f) = f else { panic!("parse") };
+        assert!(f.node && f.uv);
+        assert_eq!(f.as_config_layer().node, Some(true));
     }
 
     #[test]

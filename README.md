@@ -84,6 +84,7 @@ forwarding. `--help`/`--version` outside `--` refer to `claude_here`.
 | Flag | Meaning |
 |------|---------|
 | `--image NAME` | Variant `base` (default), `rust`, `jvm`, or any local image name |
+| `--node` (alias `--npm`), `--uv` | Add Node.js 22 with the latest npm/npx, resp. uv/uvx, as an extra image layer; `~/.npm` / `~/.cache/uv` are mounted |
 | `--mount PATH`, `--mount-rw PATH` | Extra bind mount, read-only / read-write. `PATH` or `host:container`. Repeatable |
 | `--env KEY=VALUE`, `--env KEY` | Literal value, or pass `KEY` through from the host. Repeatable |
 | `--git ro\|commit\|full` | Git mode (see below). Default `ro` |
@@ -162,6 +163,9 @@ user, uid and gid are baked in.
 
 Layers on top of the variant:
 
+* add-ons: `node = true` (Node.js 22 + latest npm/npx — many MCP servers and
+  plugin hooks need it) and `uv = true` (uv/uvx, the Rust-based Python package
+  manager; use it instead of pip). Tag suffix `-node-uv`.
 * `~/.config/claude_here/Dockerfile` — global user layer, applied to every
   variant. Plain instructions, no `FROM`, root build context.
 * `.claude_here/Dockerfile` — project layer on top of that.

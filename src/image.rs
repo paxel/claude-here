@@ -34,6 +34,7 @@ pub fn base_tag(uid: &u32) -> String {
 const DOCKERFILE_BASE: &str = include_str!("../images/Dockerfile.base");
 const DOCKERFILE_RUST: &str = include_str!("../images/Dockerfile.rust");
 const DOCKERFILE_JVM: &str = include_str!("../images/Dockerfile.jvm");
+const DOCKERFILE_ADDONS: &str = include_str!("../images/Dockerfile.addons");
 const ENTRYPOINT: &str = include_str!("../images/entrypoint.sh");
 const NET_SUMMARY: &str = include_str!("../images/net-summary.sh");
 const GIT_SHIM: &str = include_str!("../images/git-shim.sh");
@@ -47,9 +48,10 @@ pub const USER_DOCKERFILE_TEMPLATE: &str = "\
 # selected variant (base, rust, jvm, ...). The build runs as root; you do not
 # need USER lines. Changes trigger an automatic rebuild on next start.
 #
-# Examples:
-# RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm && rm -rf /var/lib/apt/lists/*
-# RUN pip install --break-system-packages uv
+# Node.js/npm and uv have their own switches (node = true / uv = true, or
+# --node / --uv); use this file for everything else. Examples:
+# RUN apt-get update && apt-get install -y --no-install-recommends shellcheck && rm -rf /var/lib/apt/lists/*
+# RUN curl -fsSL https://example.com/tool.tar.gz | tar -xz -C /usr/local/bin
 ";
 
 /// Template for `.claude_here/Dockerfile` (documented, not auto-created).
@@ -79,6 +81,31 @@ pub struct Identity {
     pub uid: u32,
     pub gid: u32,
     pub claude_version: String,
+}
+
+/// Optional tools layered on top of a variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Addons {
+    pub node: bool,
+    pub uv: bool,
+}
+
+impl Addons {
+    pub fn any(self) -> bool {
+        self.node || self.uv
+    }
+
+    /// Tag suffix such as `-node-uv`.
+    pub fn suffix(self) -> String {
+        let mut s = String::new();
+        if self.node {
+            s.push_str("-node");
+        }
+        if self.uv {
+            s.push_str("-uv");
+        }
+        s
+    }
 }
 
 /// Build policy flags.
@@ -121,12 +148,11 @@ pub fn wrap_user_layer(parent: &str, user: &str, snippet: &str) -> String {
     )
 }
 
-/// Compute the tag for a project layer.
-pub fn project_tag(variant: &str, uid: u32, has_user_layer: bool, project_dir: &Path) -> String {
+/// Compute the tag for a project layer on top of `stem` (variant tag + addon suffix).
+pub fn project_tag(stem: &str, has_user_layer: bool, project_dir: &Path) -> String {
     let suffix = if has_user_layer { "user" } else { "p" };
     format!(
-        "{}-{suffix}-{}",
-        variant_tag(variant, uid),
+        "{stem}-{suffix}-{}",
         short_hash(&project_dir.display().to_string())
     )
 }
@@ -136,6 +162,7 @@ pub struct Builder<'a> {
     pub docker: &'a Docker,
     pub paths: &'a HostPaths,
     pub identity: Identity,
+    pub addons: Addons,
     pub policy: BuildPolicy,
 }
 
@@ -156,16 +183,24 @@ impl Builder<'_> {
         if variant != "base" {
             (tag, hash) = self.ensure_variant(variant, &tag, &hash)?;
         }
+        if self.addons.any() {
+            (tag, hash) = self.ensure_addons(variant, &tag, &hash)?;
+        }
+        let stem = format!(
+            "{}{}",
+            variant_tag(variant, self.identity.uid),
+            self.addons.suffix()
+        );
         let user_file = self.paths.user_dockerfile();
         let user_snippet = read_snippet(&user_file)?;
         let has_user = user_snippet.as_deref().is_some_and(has_instructions);
         if let Some(snippet) = user_snippet.filter(|s| has_instructions(s)) {
-            let next_tag = format!("{}-user", variant_tag(variant, self.identity.uid));
+            let next_tag = format!("{stem}-user");
             (tag, hash) = self.ensure_layer(&next_tag, &tag, &hash, &snippet)?;
         }
         let project_file = project_dir.join("Dockerfile");
         if let Some(snippet) = read_snippet(&project_file)?.filter(|s| has_instructions(s)) {
-            let next_tag = project_tag(variant, self.identity.uid, has_user, project_dir);
+            let next_tag = project_tag(&stem, has_user, project_dir);
             (tag, _) = self.ensure_layer(&next_tag, &tag, &hash, &snippet)?;
         }
         Ok(tag)
@@ -229,6 +264,37 @@ impl Builder<'_> {
         let build_args = vec![
             ("BASE".to_string(), parent.to_string()),
             ("CH_USER".to_string(), self.identity.user.clone()),
+        ];
+        self.docker
+            .build(&ctx.dir, &tag, &build_args, &Self::labels(&hash), false)?;
+        Ok((tag, hash))
+    }
+
+    fn ensure_addons(
+        &self,
+        variant: &str,
+        parent: &str,
+        parent_hash: &str,
+    ) -> Result<(String, String)> {
+        let tag = format!(
+            "{}{}",
+            variant_tag(variant, self.identity.uid),
+            self.addons.suffix()
+        );
+        let hash = hash_inputs(&[parent_hash, DOCKERFILE_ADDONS, &self.addons.suffix()]);
+        if self.is_current(&tag, &hash) {
+            return Ok((tag, hash));
+        }
+        self.refuse_if_no_build(&tag)?;
+        eprintln!("claude_here: building {tag}");
+        let ctx = BuildContext::new("addons")?;
+        ctx.write("Dockerfile", DOCKERFILE_ADDONS)?;
+        let flag = |b: bool| if b { "1" } else { "0" }.to_string();
+        let build_args = vec![
+            ("BASE".to_string(), parent.to_string()),
+            ("CH_USER".to_string(), self.identity.user.clone()),
+            ("ADD_NODE".to_string(), flag(self.addons.node)),
+            ("ADD_UV".to_string(), flag(self.addons.uv)),
         ];
         self.docker
             .build(&ctx.dir, &tag, &build_args, &Self::labels(&hash), false)?;
@@ -350,16 +416,24 @@ mod tests {
 
     #[test]
     fn project_tag_is_short_and_distinct() {
-        let a = project_tag("rust", 1000, true, Path::new("/home/axel/a"));
-        let b = project_tag("rust", 1000, true, Path::new("/home/axel/b"));
+        let stem = variant_tag("rust", 1000);
+        let a = project_tag(&stem, true, Path::new("/home/axel/a"));
+        let b = project_tag(&stem, true, Path::new("/home/axel/b"));
         assert!(a.starts_with("claude_here:rust-u1000-user-"));
         assert_eq!(a.len(), "claude_here:rust-u1000-user-".len() + 8);
         assert_ne!(a, b);
         assert!(
-            project_tag("base", 1001, false, Path::new("/x"))
+            project_tag(&variant_tag("base", 1001), false, Path::new("/x"))
                 .starts_with("claude_here:base-u1001-p-")
         );
         assert_ne!(variant_tag("base", 1000), variant_tag("base", 1001));
+        let ad = Addons {
+            node: true,
+            uv: true,
+        };
+        assert_eq!(ad.suffix(), "-node-uv");
+        assert_eq!(Addons::default().suffix(), "");
+        assert!(!Addons::default().any());
     }
 
     #[test]

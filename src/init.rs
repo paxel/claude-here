@@ -19,6 +19,8 @@ pub const CONFIG_TEMPLATE: &str = "\
 # override these values; lists (env, mounts, docker_args) are appended.
 #
 # image = \"base\"              # base | rust | jvm | <custom local image>
+# node = false                  # add Node.js + latest npm/npx (--node / --npm)
+# uv = false                    # add uv/uvx, the fast Python package manager (--uv)
 # user = \"ni\"                 # container user name; set to your host user for identical paths
 # git_mode = \"ro\"             # ro | commit | full
 # ssh = false                   # forward ssh agent (git mode full only)
@@ -41,6 +43,8 @@ pub const CONFIG_TEMPLATE: &str = "\
 # m2 = \"~/.m2\"
 # gradle = \"~/.gradle\"
 # cargo = \"~/.cargo\"
+# npm = \"~/.npm\"
+# uv = \"~/.cache/uv\"
 # m2_exclude = [\"settings.xml\"]
 # gradle_exclude = [\"gradle.properties\"]
 #
@@ -199,8 +203,7 @@ fn seed_home(paths: &HostPaths, user: &str, items: &[String], reseed: bool) -> R
     );
     if plugins_need_node(&dest.join("plugins")) {
         println!(
-            "note:       seeded plugin hooks use node/npx, which the base image does not ship;\n            uncomment the nodejs line in {} to add it",
-            paths.user_dockerfile().display()
+            "note:       seeded plugin hooks use node/npx, which the base image does not ship;\n            enable it with `claude_here config set node true --global` (or --node / --npm)"
         );
     }
     Ok(())

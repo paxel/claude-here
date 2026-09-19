@@ -90,6 +90,8 @@ pub struct CachesFile {
     pub m2: Option<String>,
     pub gradle: Option<String>,
     pub cargo: Option<String>,
+    pub npm: Option<String>,
+    pub uv: Option<String>,
     /// File names inside `~/.m2` masked with an empty read-only file.
     pub m2_exclude: Option<Vec<String>>,
     /// File names inside `~/.gradle` masked with an empty read-only file.
@@ -111,6 +113,10 @@ pub struct TlsFile {
 pub struct ConfigFile {
     pub image: Option<String>,
     pub user: Option<String>,
+    /// Add Node.js with the latest npm/npx to the image.
+    pub node: Option<bool>,
+    /// Add uv/uvx (fast Python package manager) to the image.
+    pub uv: Option<bool>,
     pub git_mode: Option<GitMode>,
     pub ssh: Option<bool>,
     pub gh: Option<bool>,
@@ -160,6 +166,8 @@ impl ConfigFile {
         take!(
             image,
             user,
+            node,
+            uv,
             git_mode,
             ssh,
             gh,
@@ -175,7 +183,7 @@ impl ConfigFile {
         macro_rules! take_sub {
             ($sub:ident: $($field:ident),*) => { $( if other.$sub.$field.is_some() { self.$sub.$field = other.$sub.$field; } )* };
         }
-        take_sub!(caches: isolated, m2, gradle, cargo, m2_exclude, gradle_exclude);
+        take_sub!(caches: isolated, m2, gradle, cargo, npm, uv, m2_exclude, gradle_exclude);
         take_sub!(tls: truststore, truststore_password);
         self
     }
@@ -186,6 +194,8 @@ impl ConfigFile {
 pub struct Config {
     pub image: String,
     pub user: String,
+    pub node: bool,
+    pub uv: bool,
     pub git_mode: GitMode,
     pub ssh: bool,
     pub gh: bool,
@@ -201,6 +211,8 @@ pub struct Config {
     pub cache_m2: String,
     pub cache_gradle: String,
     pub cache_cargo: String,
+    pub cache_npm: String,
+    pub cache_uv: String,
     pub m2_exclude: Vec<String>,
     pub gradle_exclude: Vec<String>,
     pub truststore: Option<String>,
@@ -212,6 +224,8 @@ impl From<ConfigFile> for Config {
         Self {
             image: f.image.unwrap_or_else(|| DEFAULT_IMAGE.to_string()),
             user: f.user.unwrap_or_else(|| DEFAULT_USER.to_string()),
+            node: f.node.unwrap_or(false),
+            uv: f.uv.unwrap_or(false),
             git_mode: f.git_mode.unwrap_or_default(),
             ssh: f.ssh.unwrap_or(false),
             gh: f.gh.unwrap_or(false),
@@ -227,6 +241,8 @@ impl From<ConfigFile> for Config {
             cache_m2: f.caches.m2.unwrap_or_else(|| "~/.m2".to_string()),
             cache_gradle: f.caches.gradle.unwrap_or_else(|| "~/.gradle".to_string()),
             cache_cargo: f.caches.cargo.unwrap_or_else(|| "~/.cargo".to_string()),
+            cache_npm: f.caches.npm.unwrap_or_else(|| "~/.npm".to_string()),
+            cache_uv: f.caches.uv.unwrap_or_else(|| "~/.cache/uv".to_string()),
             m2_exclude: f.caches.m2_exclude.unwrap_or_default(),
             gradle_exclude: f.caches.gradle_exclude.unwrap_or_default(),
             truststore: f.tls.truststore,

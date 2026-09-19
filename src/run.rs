@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use crate::config::{Config, GitMode, MountMode};
 use crate::docker::{Docker, Mount, RunSpec, uses_host_network};
 use crate::git::GitLayout;
-use crate::image::{self, BuildPolicy, Builder, Identity};
+use crate::image::{self, Addons, BuildPolicy, Builder, Identity};
 use crate::paths::{HostPaths, PathRewriter, project_dir};
 use crate::session::{MountInfo, SessionInfo, new_session_id, sanitize_name};
 
@@ -389,6 +389,18 @@ fn add_cache_mounts(
         }
         _ => {}
     }
+    if cfg.node {
+        mounts.push(Mount::rw(
+            resolve(&cfg.cache_npm, "npm"),
+            chome.join(".npm"),
+        ));
+    }
+    if cfg.uv {
+        mounts.push(Mount::rw(
+            resolve(&cfg.cache_uv, "uv"),
+            chome.join(".cache").join("uv"),
+        ));
+    }
 }
 
 /// Ensure host-side directories exist before docker creates them as root.
@@ -431,6 +443,10 @@ pub fn execute(
             uid: facts.uid,
             gid: facts.gid,
             claude_version: cfg.claude_version.clone(),
+        },
+        addons: Addons {
+            node: cfg.node,
+            uv: cfg.uv,
         },
         policy,
     };
@@ -486,6 +502,10 @@ pub fn build_only(cfg: &Config, paths: &HostPaths, policy: BuildPolicy) -> Resul
             uid: facts.uid,
             gid: facts.gid,
             claude_version: cfg.claude_version.clone(),
+        },
+        addons: Addons {
+            node: cfg.node,
+            uv: cfg.uv,
         },
         policy,
     };
@@ -692,6 +712,20 @@ mod tests {
         assert!(
             s.contains("-v /home/axel/.config/claude_here/cache/cargo/git:/home/ni/.cargo/git ")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn node_and_uv_caches() -> Result<()> {
+        let c = cfg(ConfigFile {
+            node: Some(true),
+            uv: Some(true),
+            ..Default::default()
+        });
+        let a = assemble(&c, &paths(), &facts(), &git(), &req())?;
+        let s = a.spec.to_args().join(" ");
+        assert!(s.contains("-v /home/axel/.npm:/home/ni/.npm "));
+        assert!(s.contains("-v /home/axel/.cache/uv:/home/ni/.cache/uv "));
         Ok(())
     }
 
