@@ -285,9 +285,21 @@ claude_here:base-u<uid>  →  ...-<toolchain>...  →  ...-user  →  ...-user-<
 
 Toolchains compose: every one is a layer, they are applied in a fixed order
 regardless of the order you type them, and each prefix of a chain is itself a
-usable image — so `--go` and later `--go --jvm` share the `base-go` layer. A
-toolchain brings its own host cache mounts, the language server for its files,
-and (under `--net allowlist`) the hosts its package manager needs.
+usable image. A toolchain brings its own host cache mounts, the language server
+for its files, and (under `--net allowlist`) the hosts its package manager needs.
+
+The fixed order is **most expensive first**, because a docker layer's cache key
+includes everything beneath it: a layer at the bottom is rebuilt only when the
+base or its own definition changes, one at the top whenever something is
+inserted below it. So `dart` (a ~2.5GB Flutter checkout) is at the bottom and the
+single-binary cloud tools are at the top, and adding `--terraform` to an existing
+chain costs one small layer instead of re-downloading Flutter. Dependencies
+outrank cost, which is why `node` and `uv` sit below `python`, and `android`
+above `jvm`. `claude_here toolchains` lists them in that order.
+
+Adding a toolchain that lands *below* what you already have still rebuilds what
+is above it — nothing avoids that in a linear chain. If you know the set, put it
+in `.claude_here/config.toml` once.
 
 | Toolchain | Adds | Host caches |
 |-----------|------|-------------|

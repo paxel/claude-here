@@ -40,8 +40,19 @@ pub struct Toolchain {
     /// Extra names accepted on the command line (`--c` for `cpp`).
     pub aliases: &'static [&'static str],
     pub description: &'static str,
-    /// Build position. Lower builds first; alphabetical order would put
-    /// dependants before what they depend on.
+    /// Build position in the chain. Lower builds first, closer to the base.
+    ///
+    /// A docker layer's cache key includes everything beneath it, so a layer at
+    /// the bottom is rebuilt only when the base or its own definition changes,
+    /// while one at the top is rebuilt whenever anything below it is inserted.
+    /// The expensive toolchains therefore go first: `dart` (a ~2.5GB Flutter
+    /// checkout) at 10, the single-binary cloud tools last. Adding `--terraform`
+    /// to an existing chain then costs one small layer instead of re-downloading
+    /// Flutter.
+    ///
+    /// Dependencies outrank cost: an implied toolchain must build before the one
+    /// that implies it, which is why `node` and `uv` sit below `python` although
+    /// they are cheaper, and `android` sits above `jvm`.
     pub order: u32,
     /// Toolchains pulled in automatically.
     pub implies: &'static [&'static str],
@@ -80,7 +91,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         name: "node",
         aliases: &["npm", "js"],
         description: "Node.js, npm, pnpm, yarn, TypeScript",
-        order: 10,
+        order: 80,
         implies: &[],
         dockerfile: NODE,
         caches: &[Cache {
@@ -109,7 +120,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         name: "uv",
         aliases: &[],
         description: "uv/uvx, also how most MCP servers are launched",
-        order: 15,
+        order: 90,
         implies: &[],
         dockerfile: UV,
         caches: &[Cache {
@@ -131,7 +142,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         name: "python",
         aliases: &[],
         description: "poetry, ruff, mypy, uv, pyright",
-        order: 20,
+        order: 100,
         implies: &["node", "uv"],
         dockerfile: PYTHON,
         caches: &[Cache {
@@ -235,7 +246,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         name: "go",
         aliases: &[],
         description: "Go toolchain and gopls",
-        order: 45,
+        order: 60,
         implies: &[],
         dockerfile: GO,
         caches: &[Cache {
@@ -262,7 +273,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         name: "cpp",
         aliases: &["c"],
         description: "cmake, ninja, gdb, clang, clangd, valgrind, conan",
-        order: 50,
+        order: 70,
         implies: &[],
         dockerfile: CPP,
         caches: &[Cache {
@@ -292,7 +303,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         name: "dart",
         aliases: &["flutter"],
         description: "Flutter and Dart SDK with the Dart language server",
-        order: 55,
+        order: 10,
         implies: &[],
         dockerfile: DART,
         caches: &[Cache {
@@ -319,7 +330,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         name: "docs",
         aliases: &[],
         description: "plantuml, d2, typst, pandoc (graphviz is in the base)",
-        order: 60,
+        order: 110,
         implies: &[],
         dockerfile: DOCS,
         caches: &[],
@@ -331,7 +342,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         name: "k8s",
         aliases: &["kubernetes"],
         description: "kubectl, helm, kustomize",
-        order: 70,
+        order: 130,
         implies: &[],
         dockerfile: K8S,
         caches: &[],
@@ -348,7 +359,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         name: "terraform",
         aliases: &[],
         description: "terraform",
-        order: 75,
+        order: 140,
         implies: &[],
         dockerfile: TERRAFORM,
         caches: &[],
@@ -360,7 +371,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         name: "aws",
         aliases: &[],
         description: "AWS CLI v2",
-        order: 80,
+        order: 120,
         implies: &[],
         dockerfile: AWS,
         caches: &[],
@@ -372,7 +383,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         name: "gcloud",
         aliases: &[],
         description: "Google Cloud CLI (large)",
-        order: 85,
+        order: 20,
         implies: &[],
         dockerfile: GCLOUD,
         caches: &[],
@@ -384,7 +395,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         name: "azure",
         aliases: &["az"],
         description: "Azure CLI",
-        order: 90,
+        order: 50,
         implies: &[],
         dockerfile: AZURE,
         caches: &[],
@@ -483,6 +494,31 @@ mod tests {
         assert_eq!(resolved(&["rust", "jvm"]), vec!["jvm", "rust"]);
     }
 
+    /// The expensive toolchains must sit at the bottom of the chain, or adding a
+    /// cheap one on top rebuilds them (a docker layer's cache key includes
+    /// everything beneath it).
+    #[test]
+    fn expensive_toolchains_build_before_cheap_ones() {
+        let position = |name: &str| find(name).map_or(u32::MAX, |t| t.order);
+        for cheap in ["terraform", "k8s", "aws", "docs"] {
+            for expensive in ["dart", "gcloud", "jvm", "rust"] {
+                assert!(
+                    position(expensive) < position(cheap),
+                    "{expensive} must build before {cheap}"
+                );
+            }
+        }
+        // Dart is the most expensive thing shipped, so nothing goes below it.
+        let dart = position("dart");
+        for t in TOOLCHAINS {
+            assert!(
+                t.name == "dart" || t.order > dart,
+                "{} is below dart",
+                t.name
+            );
+        }
+    }
+
     #[test]
     fn implications_are_pulled_in_before_their_dependant() {
         assert_eq!(resolved(&["android"]), vec!["jvm", "android"]);
@@ -541,10 +577,11 @@ mod tests {
                 t.name
             );
         }
+        // In chain order: aws builds before k8s.
         let chain = resolve(&["k8s".to_string(), "aws".to_string()]).unwrap_or_default();
         assert_eq!(
             credentials(&chain),
-            vec![("~/.kube", ".kube"), ("~/.aws", ".aws")]
+            vec![("~/.aws", ".aws"), ("~/.kube", ".kube")]
         );
     }
 

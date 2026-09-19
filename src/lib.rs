@@ -310,7 +310,11 @@ fn net_command(paths: &HostPaths, action: NetAction) -> Result<()> {
 
 /// One line per shipped toolchain, for `claude_here toolchains`.
 fn print_toolchains() {
-    for t in toolchain::TOOLCHAINS {
+    // Chain order, so the listing matches how the image is layered: expensive
+    // toolchains first, at the bottom, where nothing is inserted below them.
+    let mut all: Vec<&toolchain::Toolchain> = toolchain::TOOLCHAINS.iter().collect();
+    all.sort_by_key(|t| t.order);
+    for t in all {
         let mut flags = format!("--{}", t.name);
         for a in t.aliases {
             flags.push_str(", --");
