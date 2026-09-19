@@ -1,0 +1,48 @@
+[package]
+name = "claude-here"
+version = "0.1.0"
+edition = "2024"
+description = "Run Claude Code inside a project-scoped Docker sandbox with enforced git modes and network capture"
+license = "MIT"
+repository = "https://github.com/paxel/claude-here"
+readme = "README.md"
+keywords = ["claude", "docker", "sandbox", "ai", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+default-run = "claude_here"
+
+[lib]
+name = "claude_here"
+path = "src/lib.rs"
+
+[[bin]]
+name = "claude_here"
+path = "src/bin/claude_here.rs"
+
+[[bin]]
+name = "claude_yolo"
+path = "src/bin/claude_yolo.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive", "env", "string"] }
+clap_complete = "4.6.11"
+comfy-table = "8.0.0"
+hex = "0.4.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+toml = "1.1.6"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+struct_excessive_bools = "allow"
+missing_panics_doc = "allow"
