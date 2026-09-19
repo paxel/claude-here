@@ -23,6 +23,7 @@ RUN echo 'wireshark-common wireshark-common/install-setuid boolean false' | debc
       build-essential pkg-config libssl-dev \
       openssh-client \
       tcpdump tshark util-linux \
+      dnsmasq ipset iptables \
  && rm -rf /var/lib/apt/lists/* \
  && ln -s /usr/bin/fdfind /usr/local/bin/fd \
  && sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
@@ -50,12 +51,16 @@ USER root
 
 ENV PATH="/usr/local/lib/claude_here/shims:/home/${CH_USER}/.local/bin:${PATH}"
 
-COPY entrypoint.sh net-summary.sh cloud-shim.sh /usr/local/lib/claude_here/
+COPY entrypoint.sh net-summary.sh cloud-shim.sh net-allowlist.sh /usr/local/lib/claude_here/
 COPY git-shim.sh /usr/local/bin/git
 RUN chmod 755 /usr/local/lib/claude_here/*.sh /usr/local/bin/git
 
 # Cloud shims live in a directory that comes first on PATH, so they are found
 # before the real binaries a cloud toolchain installs into /usr/local/bin.
+# dnsmasq is only started by the entrypoint in net mode allowlist.
+RUN printf 'conf-dir=/etc/dnsmasq.d,.dpkg-dist,.dpkg-old,.dpkg-new\n' > /etc/dnsmasq.conf \
+ && mkdir -p /etc/dnsmasq.d
+
 RUN mkdir -p /usr/local/lib/claude_here/shims \
  && for t in kubectl helm terraform aws gcloud az; do \
       ln -s /usr/local/lib/claude_here/cloud-shim.sh "/usr/local/lib/claude_here/shims/$t"; \

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::{CloudMode, Config, GitMode, MountMode};
+use crate::config::{CloudMode, Config, GitMode, MountMode, NetMode};
 use crate::docker::{Docker, Mount, RunSpec, uses_host_network};
 use crate::git::GitLayout;
 use crate::image::{self, BuildPolicy, Builder, Identity};
@@ -204,6 +204,7 @@ pub fn assemble(
         &mut warnings,
     );
 
+    add_net_allowlist(cfg, &req.toolchains, &mut env, &mut warnings);
     let env_passthrough = add_env(cfg, facts, req, &chome, net_capture, &mut env);
 
     let info = session_info(cfg, facts, req, &cwd_c, &mounts, net_capture, ssh, gh);
@@ -212,13 +213,7 @@ pub fn assemble(
         serde_json::to_string(&info).context("serializing session info")?,
     ));
 
-    let mut command = vec!["claude".to_string()];
-    if req.yolo {
-        command.push("--dangerously-skip-permissions".into());
-    }
-    command.extend(["--append-system-prompt".to_string(), info.system_prompt()]);
-    command.extend(req.claude_args.iter().cloned());
-
+    let command = claude_command(req, &info);
     let base = facts
         .cwd
         .file_name()
@@ -236,6 +231,13 @@ pub fn assemble(
         env_files: env_files(token_file, gh.then(|| gh_env_file(paths, &req.session_id))),
         memory: cfg.memory.clone(),
         cpus: cfg.cpus.map(|c| c.to_string()),
+        extra_caps: if cfg.net_mode == NetMode::Allowlist {
+            // The root phase needs it for ipset/iptables; the sandbox user is
+            // unprivileged and no-new-privileges is set, so its reach is unchanged.
+            vec!["NET_ADMIN".to_string()]
+        } else {
+            Vec::new()
+        },
         extra_args: cfg.docker_args.clone(),
         tty: facts.tty,
         command,
@@ -268,6 +270,7 @@ fn session_info(
         mcp: req.mcp.clone(),
         git_mode: cfg.git_mode,
         cloud_mode: cfg.cloud_mode,
+        net_mode: cfg.net_mode,
         yolo: req.yolo,
         user: cfg.user.clone(),
         cwd_host: facts.cwd.clone(),
@@ -284,6 +287,49 @@ fn session_info(
         ssh,
         gh,
     }
+}
+
+/// Hand the allowlist to the entrypoint, which turns it into dnsmasq ipset
+/// rules before anything else in the container runs.
+fn add_net_allowlist(
+    cfg: &Config,
+    chain: &[&Toolchain],
+    env: &mut Vec<(String, String)>,
+    warnings: &mut Vec<String>,
+) {
+    if cfg.net_mode != NetMode::Allowlist {
+        return;
+    }
+    let allow = allowed_domains(cfg, chain);
+    env.push(("CH_NET_ALLOW".to_string(), allow.join(",")));
+    warnings.push(format!(
+        "egress allowlist active with {} domain(s); everything else is rejected. Run once with --net full and read `claude_here net top` to see what a build needs",
+        allow.len()
+    ));
+}
+
+/// Hosts allowed in `allowlist` net mode: what every session needs, what the
+/// enabled toolchains declare, and whatever the configuration adds.
+fn allowed_domains(cfg: &Config, chain: &[&Toolchain]) -> Vec<String> {
+    let mut v = toolchain::domains(chain);
+    for d in &cfg.net_allow {
+        let d = d.trim();
+        if !d.is_empty() && !v.iter().any(|x| x == d) {
+            v.push(d.to_string());
+        }
+    }
+    v
+}
+
+/// `claude` plus the sandbox paragraph appended to its system prompt.
+fn claude_command(req: &RunRequest, info: &SessionInfo) -> Vec<String> {
+    let mut command = vec!["claude".to_string()];
+    if req.yolo {
+        command.push("--dangerously-skip-permissions".into());
+    }
+    command.extend(["--append-system-prompt".to_string(), info.system_prompt()]);
+    command.extend(req.claude_args.iter().cloned());
+    command
 }
 
 fn env_files(token_file: PathBuf, gh_file: Option<PathBuf>) -> Vec<PathBuf> {
@@ -346,6 +392,7 @@ fn add_env(
         ("CH_SESSION_ID".to_string(), req.session_id.clone()),
         ("CH_GIT_MODE".to_string(), cfg.git_mode.to_string()),
         ("CH_CLOUD_MODE".to_string(), cfg.cloud_mode.to_string()),
+        ("CH_NET_MODE".to_string(), cfg.net_mode.to_string()),
         (
             "CH_NET_CAPTURE".to_string(),
             if net_capture { "1" } else { "0" }.to_string(),
@@ -619,10 +666,11 @@ pub fn execute(
         cfg.git_mode,
         protected,
         cfg.cloud_mode,
-        if assembled.info.net_capture {
-            "recorded"
-        } else {
-            "not recorded"
+        match (cfg.net_mode, assembled.info.net_capture) {
+            (NetMode::Allowlist, true) => "allowlist, recorded",
+            (NetMode::Allowlist, false) => "allowlist",
+            (NetMode::Full, true) => "recorded",
+            (NetMode::Full, false) => "not recorded",
         },
         if yolo { " | YOLO" } else { "" }
     );
@@ -949,6 +997,47 @@ mod tests {
         assert!(assemble(&c, &paths(), &facts(), &git(), &r).is_err());
         r.i_know = true;
         assert!(assemble(&c, &paths(), &facts(), &git(), &r).is_ok());
+    }
+
+    #[test]
+    fn allowlist_passes_domains_and_asks_for_net_admin() -> Result<()> {
+        let c = cfg(ConfigFile {
+            toolchains: vec!["rust".into()],
+            net_mode: Some(NetMode::Allowlist),
+            net_allow: vec!["example.com".into()],
+            ..Default::default()
+        });
+        let a = assemble(&c, &paths(), &facts(), &git(), &req_with(&["rust"]))?;
+        let s = a.spec.to_args().join(" ");
+        assert!(s.contains("--cap-add NET_ADMIN"));
+        assert!(s.contains("-e CH_NET_MODE=allowlist"));
+        let allow = a
+            .spec
+            .env
+            .iter()
+            .find(|(k, _)| k == "CH_NET_ALLOW")
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
+        assert!(allow.contains("api.anthropic.com"));
+        assert!(allow.contains("static.crates.io"));
+        assert!(allow.contains("example.com"));
+        Ok(())
+    }
+
+    #[test]
+    fn full_net_mode_adds_no_capability() -> Result<()> {
+        let a = assemble(
+            &cfg(ConfigFile::default()),
+            &paths(),
+            &facts(),
+            &git(),
+            &req(),
+        )?;
+        let s = a.spec.to_args().join(" ");
+        assert!(!s.contains("NET_ADMIN"));
+        assert!(!s.contains("CH_NET_ALLOW"));
+        assert!(s.contains("-e CH_NET_MODE=full"));
+        Ok(())
     }
 
     #[test]

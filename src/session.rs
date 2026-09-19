@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{CloudMode, GitMode};
+use crate::config::{CloudMode, GitMode, NetMode};
 
 /// Civil date/time from unix seconds (UTC), no external crate needed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,6 +143,7 @@ pub struct SessionInfo {
     pub mcp: Vec<String>,
     pub git_mode: GitMode,
     pub cloud_mode: CloudMode,
+    pub net_mode: NetMode,
     pub yolo: bool,
     pub user: String,
     pub cwd_host: PathBuf,
@@ -199,6 +200,11 @@ impl SessionInfo {
             s.push_str("MCP server(s) granted for this session: ");
             s.push_str(&self.mcp.join(", "));
             s.push_str(". ");
+        }
+        if self.net_mode == NetMode::Allowlist {
+            s.push_str(
+                "Network mode is 'allowlist': only the hosts the enabled toolchains and the configuration allow are reachable; everything else is rejected by a packet filter you cannot change. When a connection is refused, report the host so the user can allow it instead of looking for another route. ",
+            );
         }
         if self.net_capture {
             s.push_str("All network traffic of this session is recorded for later review. ");
@@ -258,6 +264,7 @@ mod tests {
             mcp: vec![],
             git_mode: GitMode::Ro,
             cloud_mode: CloudMode::None,
+            net_mode: NetMode::Full,
             yolo: false,
             user: "ni".into(),
             cwd_host: "/home/axel/p".into(),

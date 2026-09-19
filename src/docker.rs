@@ -69,6 +69,9 @@ pub struct RunSpec {
     pub env_files: Vec<PathBuf>,
     pub memory: Option<String>,
     pub cpus: Option<String>,
+    /// Extra capabilities beyond `CAPS`, e.g. `NET_ADMIN` for the egress
+    /// allowlist. The sandbox user holds no capabilities either way.
+    pub extra_caps: Vec<String>,
     /// Raw flags appended before the image name.
     pub extra_args: Vec<String>,
     pub tty: bool,
@@ -90,6 +93,9 @@ impl RunSpec {
         a.extend(["--cap-drop".into(), "ALL".into()]);
         for cap in CAPS {
             a.extend(["--cap-add".into(), (*cap).to_string()]);
+        }
+        for cap in &self.extra_caps {
+            a.extend(["--cap-add".into(), cap.clone()]);
         }
         a.extend(["--security-opt".into(), "no-new-privileges".into()]);
         a.extend(["--pids-limit".into(), PIDS_LIMIT.to_string()]);
@@ -254,6 +260,7 @@ mod tests {
             env_files: vec!["/home/axel/.config/claude_here/token".into()],
             memory: Some("8g".into()),
             cpus: None,
+            extra_caps: vec!["NET_ADMIN".into()],
             extra_args: vec!["--network".into(), "mynet".into()],
             tty: true,
             command: vec!["claude".into(), "-p".into(), "hi".into()],
@@ -261,6 +268,7 @@ mod tests {
         let a = spec.to_args();
         let s = a.join(" ");
         assert!(s.starts_with("run --rm --init -it --name claude_here-foo-abc --hostname claude-here --cap-drop ALL --cap-add NET_RAW"));
+        assert!(s.contains("--cap-add FOWNER --cap-add NET_ADMIN"));
         assert!(s.contains("--security-opt no-new-privileges --pids-limit 4096"));
         assert!(s.contains("--memory 8g"));
         assert!(!s.contains("--cpus"));

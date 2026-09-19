@@ -1,4 +1,4 @@
-# ADR 0006: Egress allowlist through an in-container CONNECT proxy
+# ADR 0006: Egress allowlist through a resolver-fed packet filter
 
 Date: 2026-09-19
 Status: accepted
@@ -20,12 +20,20 @@ TLS SNI an `iptables` rule would need is not available to it.
 A `net_mode` axis, default `full`:
 
 * `full` — today's behaviour, unrestricted egress, still recorded.
-* `allowlist` — all egress is dropped except DNS and a proxy listening inside
-  the container. The proxy accepts `CONNECT` and matches the requested host
-  against the allowlist; nothing is intercepted or re-signed, so no certificate
-  has to be injected and no client has to trust anything new. It runs as its
-  own unprivileged user, like the `netlog` user of ADR 0003, and the sandbox
-  user cannot reconfigure it.
+* `allowlist` — `dnsmasq` becomes the container resolver and, through
+  `ipset=/<domain>/ch_allow`, records every address it answers for an allowed
+  name (subdomains included) in an ipset. `iptables` then accepts loopback,
+  established connections, the resolver's own traffic and destinations in that
+  set, and rejects everything else with `icmp-admin-prohibited` so a blocked
+  client fails immediately instead of hanging. IPv6 is filtered the same way and
+  rejected wholesale when `ip6tables` is missing: a missing rule must never mean
+  "allowed".
+
+  A `CONNECT` proxy was the first design and was dropped: it only restricts
+  clients that honour `http_proxy`, and Maven, Gradle and several others do not.
+  Feeding the filter from the resolver covers every client, and — like the proxy
+  variant — intercepts nothing, so TLS stays end to end and no certificate has
+  to be injected anywhere.
 
 The root phase needs `NET_ADMIN` to install the filter rules. The sandbox user
 still holds no capabilities (unprivileged uid, `no-new-privileges`), so this
@@ -46,12 +54,16 @@ in `full`, read `claude_here net top`, promote the hosts that are acceptable.
 
 * `WebFetch` fetches client-side and therefore fails for hosts that are not on
   the list. There is deliberately no bypass — a bypass would be a hole through
-  the axis. The proxy's denial names the blocked host so it can be added.
+  the axis. The rejection is immediate and the host appears in the session
+  capture, so it can be allowed deliberately.
 * `claude plugin install` and marketplace updates need `github.com` on the list.
 * Cloud modes (ADR 0005) interact badly with a static list: a cluster API
   endpoint comes from the mounted kubeconfig, not from a known domain, so it
   has to be derived at run time from the mounted credentials.
-* A failed build under `allowlist` must be diagnosable; the blocked host is
-  reported in the session summary, not only in the proxy log.
+* A failed build under `allowlist` must be diagnosable: the attempt is in the
+  session capture, and the tool prints how many domains are active at start.
+* Addresses enter the set only through a lookup that goes to this resolver. A
+  client that connects to a hard-coded IP, or reuses an address cached from
+  before the session, is rejected.
 * The default stays `full` for now. Flipping the default to `allowlist` is a
   later decision, once the shipped toolchain domain lists have proven complete.

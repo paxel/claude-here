@@ -343,6 +343,39 @@ The servers granted for a run are printed in the startup line and listed in
 `CLAUDE_HERE_SESSION_INFO`. An MCP server can grant reach that no shim here can
 restrict — that is why it takes an explicit grant.
 
+### Network modes
+
+Recording tells you what happened; it does not prevent it. `--net allowlist`
+restricts egress to the hosts the enabled toolchains need plus whatever you add:
+
+```sh
+claude_here --rust --net allowlist                      # crates.io and the API, nothing else
+claude_here --net allowlist --net-allow example.com     # plus one host
+claude_here config set net_mode allowlist               # per project
+```
+
+```toml
+net_mode = "allowlist"
+net_allow = ["internal.registry.example.com"]
+```
+
+How it works: `dnsmasq` becomes the container resolver and puts every address it
+answers for an allowed name — subdomains included — into an ipset; a packet
+filter accepts destinations in that set and rejects the rest immediately with
+`icmp-admin-prohibited`. Nothing is intercepted and no certificate is injected,
+so TLS stays end to end, and unlike a proxy this also restricts clients that
+ignore `http_proxy` (Maven and Gradle among them). The root phase needs
+`NET_ADMIN` to install the rules; the sandbox user still holds no capabilities.
+
+Each toolchain brings the hosts its package manager needs, so `--rust --net
+allowlist` can fetch crates without any configuration. Building a project list is
+empirical: run once with `--net full`, read `claude_here net top`, and allow what
+you accept.
+
+Two consequences worth knowing: Claude's `WebFetch` fails for hosts that are not
+allowed — there is deliberately no bypass — and `claude plugin install` needs
+`github.com` on the list.
+
 ### Network recording
 
 Every session (unless `--no-net-log` / `net_capture = false` / host
@@ -387,7 +420,7 @@ Every session also prints one line at exit
 
 ```json
 {"tool":"claude_here","version":"0.1.0","session_id":"20260919-095014-8865",
- "image":"claude_here:base-u1000","toolchains":[],"mcp":[],"git_mode":"ro","cloud_mode":"none","yolo":false,"user":"ni",
+ "image":"claude_here:base-u1000","toolchains":[],"mcp":[],"git_mode":"ro","cloud_mode":"none","net_mode":"full","yolo":false,"user":"ni",
  "cwd_host":"/home/axel/src/foo","cwd":"/home/ni/src/foo",
  "mounts":[{"host":"/home/axel/src/foo","container":"/home/ni/src/foo","mode":"rw"},
            {"host":"/home/axel/src/foo/.git","container":"/home/ni/src/foo/.git","mode":"ro"}],
@@ -427,7 +460,7 @@ memory, …) comes from its own probing; nothing is scripted. The text lives in
 Startup prints the effective setup:
 
 ```
-claude_here: session 20260919-095014-8865 | image claude_here:base-u1000 | git ro (1 .git dir(s) read-only) | net recorded
+claude_here: session 20260919-095014-8865 | image claude_here:base-u1000 | git ro (1 .git dir(s) read-only) | cloud none | net recorded
 ```
 
 ## Uninstall

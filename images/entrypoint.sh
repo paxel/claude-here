@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Root phase of every claude_here session:
 #   1. publish the git and cloud modes where the sandbox user cannot change them
-#   2. start the packet capture as user `netlog`
+#   2. apply the egress allowlist and start the capture as user `netlog`
 #   3. drop to the sandbox user and run the command
 #   4. on exit, stop the capture, summarize and hand the files to the host
 set -euo pipefail
@@ -10,6 +10,8 @@ set -euo pipefail
 CH_GIT_MODE="${CH_GIT_MODE:-ro}"
 CH_CLOUD_MODE="${CH_CLOUD_MODE:-none}"
 CH_NET_CAPTURE="${CH_NET_CAPTURE:-1}"
+CH_NET_MODE="${CH_NET_MODE:-full}"
+CH_NET_ALLOW="${CH_NET_ALLOW:-}"
 CAP_DIR=/var/log/claude_here
 OUT_DIR=/var/log/claude_here_out
 HOME_DIR="/home/${CH_USER}"
@@ -25,7 +27,13 @@ fi
 mkdir -p /etc/claude_here
 printf '%s\n' "${CH_GIT_MODE}" > /etc/claude_here/git_mode
 printf '%s\n' "${CH_CLOUD_MODE}" > /etc/claude_here/cloud_mode
-chmod 644 /etc/claude_here/git_mode /etc/claude_here/cloud_mode
+printf '%s\n' "${CH_NET_MODE}" > /etc/claude_here/net_mode
+chmod 644 /etc/claude_here/git_mode /etc/claude_here/cloud_mode /etc/claude_here/net_mode
+
+# Egress allowlist before anything else runs, so nothing slips out first.
+if [ "${CH_NET_MODE}" = "allowlist" ]; then
+  /usr/local/lib/claude_here/net-allowlist.sh "${CH_NET_ALLOW}"
+fi
 
 TCPDUMP_PID=""
 if [ "${CH_NET_CAPTURE}" = "1" ]; then
