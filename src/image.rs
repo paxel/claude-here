@@ -41,6 +41,8 @@ const DOCKERFILE_BASE: &str = include_str!("../images/Dockerfile.base");
 const ENTRYPOINT: &str = include_str!("../images/entrypoint.sh");
 const NET_SUMMARY: &str = include_str!("../images/net-summary.sh");
 const GIT_SHIM: &str = include_str!("../images/git-shim.sh");
+const CLOUD_SHIM: &str = include_str!("../images/cloud-shim.sh");
+const NET_ALLOWLIST: &str = include_str!("../images/net-allowlist.sh");
 
 /// Template written to `~/.config/claude_here/Dockerfile` on init.
 pub const USER_DOCKERFILE_TEMPLATE: &str = "\
@@ -175,6 +177,8 @@ impl Builder<'_> {
             ENTRYPOINT,
             NET_SUMMARY,
             GIT_SHIM,
+            CLOUD_SHIM,
+            NET_ALLOWLIST,
             &id.user,
             &id.uid.to_string(),
             &id.gid.to_string(),
@@ -190,6 +194,8 @@ impl Builder<'_> {
         ctx.write("entrypoint.sh", ENTRYPOINT)?;
         ctx.write("net-summary.sh", NET_SUMMARY)?;
         ctx.write("git-shim.sh", GIT_SHIM)?;
+        ctx.write("cloud-shim.sh", CLOUD_SHIM)?;
+        ctx.write("net-allowlist.sh", NET_ALLOWLIST)?;
         let build_args = vec![
             ("CH_USER".to_string(), id.user.clone()),
             ("CH_UID".to_string(), id.uid.to_string()),
@@ -319,6 +325,55 @@ impl Drop for BuildContext {
 mod tests {
     use super::*;
     use crate::toolchain;
+
+    /// Every file `Dockerfile.base` copies must be written into the build
+    /// context and go into the base hash, or the build fails with
+    /// "failed to compute cache key".
+    #[test]
+    fn base_context_has_every_copied_file() {
+        let copied: Vec<String> = DOCKERFILE_BASE
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("COPY "))
+            .flat_map(|rest| {
+                rest.split_whitespace()
+                    .filter(|w| {
+                        std::path::Path::new(w)
+                            .extension()
+                            .is_some_and(|e| e == "sh")
+                    })
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert!(copied.len() >= 4, "found {copied:?}");
+        let written = [
+            "entrypoint.sh",
+            "net-summary.sh",
+            "git-shim.sh",
+            "cloud-shim.sh",
+            "net-allowlist.sh",
+        ];
+        for f in &copied {
+            assert!(
+                written.contains(&f.as_str()),
+                "{f} is copied but never written"
+            );
+        }
+        for f in written {
+            let text = match f {
+                "entrypoint.sh" => ENTRYPOINT,
+                "net-summary.sh" => NET_SUMMARY,
+                "git-shim.sh" => GIT_SHIM,
+                "cloud-shim.sh" => CLOUD_SHIM,
+                _ => NET_ALLOWLIST,
+            };
+            assert!(!text.is_empty(), "{f} is empty");
+            assert!(
+                copied.contains(&f.to_string()),
+                "{f} is written but never copied"
+            );
+        }
+    }
 
     #[test]
     fn hash_is_stable_and_sensitive() {
