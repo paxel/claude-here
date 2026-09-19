@@ -28,8 +28,11 @@ claude_yolo                      # --dangerously-skip-permissions, still sandbox
   `claude setup-token`; the ssh agent and a `GH_TOKEN` (from the host's
   `gh auth token`) are only passed when you ask for them in `full` git mode. Host environment variables are passed only when
   named explicitly.
-* **Network is recorded.** A `tcpdump` owned by a separate user runs inside the
-  container; the sandbox user cannot stop it or read it. After the session a
+* **Network is recorded, and can be restricted.** A `tcpdump` owned by a
+  separate user runs inside the container; the sandbox user cannot stop it or
+  tamper with it, and only this session's output directory is mounted, so
+  earlier captures are unreachable from inside. `--net allowlist` limits egress
+  to the hosts the enabled toolchains and your configuration allow. After the session a
   `tshark` summary tells you which hosts were contacted, how often and how much
   data went each way. `claude_here net last|top|grep|shark` reads it back.
 * **Non-root, no sudo.** The container user (default `ni`) is created with

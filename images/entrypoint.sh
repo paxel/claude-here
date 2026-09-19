@@ -2,7 +2,7 @@
 # Root phase of every claude_here session:
 #   1. publish the git and cloud modes where the sandbox user cannot change them
 #   2. apply the egress allowlist and start the capture as user `netlog`
-#   3. drop to the sandbox user and run the command
+#   3. sync the bundled skills and plugin, drop to the sandbox user, run
 #   4. on exit, stop the capture, summarize and hand the files to the host
 set -euo pipefail
 
@@ -12,6 +12,7 @@ CH_CLOUD_MODE="${CH_CLOUD_MODE:-none}"
 CH_NET_CAPTURE="${CH_NET_CAPTURE:-1}"
 CH_NET_MODE="${CH_NET_MODE:-full}"
 CH_NET_ALLOW="${CH_NET_ALLOW:-}"
+CH_PLUGIN_DIR="${CH_PLUGIN_DIR:-}"
 CAP_DIR=/var/log/claude_here
 OUT_DIR=/var/log/claude_here_out
 HOME_DIR="/home/${CH_USER}"
@@ -44,6 +45,33 @@ if [ "${CH_NET_CAPTURE}" = "1" ]; then
   setsid tcpdump -i any -s 512 -U --immediate-mode -Z netlog \
     -w "${CAP_DIR}/${CH_SESSION_ID}.pcap" >/dev/null 2>"${CAP_DIR}/tcpdump.err" &
   TCPDUMP_PID=$!
+fi
+
+# The bundled skills and language servers live in a read-only mount. Copy the
+# skills into the persistent home (they must be writable-adjacent to be found)
+# and register the marketplace once per plugin version, as the sandbox user.
+if [ -n "${CH_PLUGIN_DIR}" ] && [ -d "${CH_PLUGIN_DIR}" ]; then
+  want="$(cat "${CH_PLUGIN_DIR}/.hash" 2>/dev/null || echo none)"
+  have="$(cat "${HOME_DIR}/.claude/.claude_here_plugin" 2>/dev/null || echo none)"
+  run_as_user() {
+    env HOME="${HOME_DIR}" USER="${CH_USER}" LOGNAME="${CH_USER}" \
+      setpriv --reuid="${CH_UID}" --regid="${CH_GID}" --init-groups -- "$@"
+  }
+  if [ "${want}" != "${have}" ]; then
+    run_as_user mkdir -p "${HOME_DIR}/.claude/skills"
+    run_as_user rm -rf "${HOME_DIR}/.claude/skills/claude_here"
+    run_as_user cp -r "${CH_PLUGIN_DIR}/skills" "${HOME_DIR}/.claude/skills/claude_here"
+    # Registration is best effort: the skills above work without it, and a
+    # failure here must never keep the session from starting.
+    if run_as_user claude plugin marketplace add "${CH_PLUGIN_DIR}" >/dev/null 2>&1 ||
+       run_as_user claude plugin marketplace update claude_here >/dev/null 2>&1; then
+      run_as_user claude plugin install claude-here@claude_here -y >/dev/null 2>&1 ||
+        echo "claude_here: note: could not enable the bundled plugin; language servers stay off" >&2
+    else
+      echo "claude_here: note: could not register the bundled marketplace; language servers stay off" >&2
+    fi
+    run_as_user sh -c "printf '%s\n' \"${want}\" > \"${HOME_DIR}/.claude/.claude_here_plugin\""
+  fi
 fi
 
 CHILD=""

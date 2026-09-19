@@ -8,6 +8,7 @@ pub mod image;
 pub mod init;
 pub mod net;
 pub mod paths;
+pub mod plugin;
 pub mod run;
 pub mod session;
 pub mod toolchain;

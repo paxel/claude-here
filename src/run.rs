@@ -16,6 +16,10 @@ use crate::toolchain::{self, Toolchain};
 
 /// Container-side path of the host net log directory.
 pub const NET_OUT_DIR: &str = "/var/log/claude_here_out";
+/// Container-side path, relative to the container home, of the read-only view
+/// of this project's network summaries. The captures themselves stay out: they
+/// hold request headers and would leak credentials from earlier sessions.
+pub const NET_VIEW_DIR: &str = ".claude_here/net";
 /// Container-side path of a forwarded ssh agent socket.
 pub const SSH_AGENT_PATH: &str = "/run/claude_here/ssh-agent";
 
@@ -38,6 +42,8 @@ pub struct HostFacts {
     /// Credential directories of the shipped cloud toolchains that exist on
     /// this host. Gathered here so `assemble` stays pure.
     pub cloud_dirs: Vec<PathBuf>,
+    /// Whether earlier summaries of this project exist to show.
+    pub net_view: bool,
 }
 
 impl HostFacts {
@@ -62,6 +68,7 @@ impl HostFacts {
                 .flatten(),
             token_file: exists(paths.token_file()),
             empty_file,
+            net_view: true,
             cloud_dirs: toolchain::TOOLCHAINS
                 .iter()
                 .flat_map(|t| t.credentials.iter())
@@ -178,9 +185,12 @@ pub fn assemble(
         warnings.push("host networking requested via docker_args; network capture disabled".into());
     }
     if net_capture {
-        mounts.push(Mount::rw(paths.net_log_dir(), NET_OUT_DIR));
+        // Only this session's output directory, never the log directory: the
+        // captures of earlier sessions hold request headers (ADR 0008).
+        mounts.push(Mount::rw(paths.net_out_dir(&req.session_id), NET_OUT_DIR));
     }
 
+    add_bundled_mounts(paths, facts, &chome, &mut mounts, &mut env);
     add_extra_mounts(cfg, paths, &rw, &mut mounts);
     add_cache_mounts(
         cfg,
@@ -336,6 +346,23 @@ fn env_files(token_file: PathBuf, gh_file: Option<PathBuf>) -> Vec<PathBuf> {
     let mut v = vec![token_file];
     v.extend(gh_file);
     v
+}
+
+/// The generated plugin (skills + language servers) and the read-only view of
+/// this project's earlier network summaries.
+fn add_bundled_mounts(
+    paths: &HostPaths,
+    facts: &HostFacts,
+    chome: &Path,
+    mounts: &mut Vec<Mount>,
+    env: &mut Vec<(String, String)>,
+) {
+    let plugin = chome.join(crate::plugin::CONTAINER_DIR);
+    mounts.push(Mount::ro(paths.plugin_dir(), &plugin));
+    env.push(("CH_PLUGIN_DIR".to_string(), plugin.display().to_string()));
+    if facts.net_view {
+        mounts.push(Mount::ro(paths.net_view_dir(), chome.join(NET_VIEW_DIR)));
+    }
 }
 
 /// User-configured mounts (`[[mounts]]` / `--mount*`).
@@ -565,7 +592,13 @@ fn add_cache_mounts(
 }
 
 /// Ensure host-side directories exist before docker creates them as root.
-pub fn prepare_host_dirs(paths: &HostPaths, cfg: &Config, spec: &RunSpec) -> Result<Vec<String>> {
+pub fn prepare_host_dirs(
+    paths: &HostPaths,
+    cfg: &Config,
+    spec: &RunSpec,
+    chain: &[&Toolchain],
+    project: &Path,
+) -> Result<Vec<String>> {
     fs::create_dir_all(paths.container_home())?;
     let claude_json = paths.container_home().join(".claude.json");
     ensure_onboarded(&claude_json)?;
@@ -582,6 +615,8 @@ pub fn prepare_host_dirs(paths: &HostPaths, cfg: &Config, spec: &RunSpec) -> Res
     if cfg.caches_isolated {
         fs::create_dir_all(paths.cache_dir())?;
     }
+    crate::plugin::generate(&paths.plugin_dir(), chain)?;
+    stage_net_summaries(paths, project)?;
     for m in &spec.mounts {
         if !m.read_only && !m.host.exists() {
             fs::create_dir_all(&m.host)
@@ -589,6 +624,32 @@ pub fn prepare_host_dirs(paths: &HostPaths, cfg: &Config, spec: &RunSpec) -> Res
         }
     }
     Ok(granted)
+}
+
+/// Assemble the read-only view of earlier network activity: the `.summary.json`
+/// files of *this* project and nothing else. The pcap files never travel — they
+/// are captured with `-s 512` and therefore contain request headers, including
+/// `Authorization` — and neither do other projects' sessions (ADR 0008).
+fn stage_net_summaries(paths: &HostPaths, project: &Path) -> Result<usize> {
+    let view = paths.net_view_dir();
+    if view.exists() {
+        fs::remove_dir_all(&view).with_context(|| format!("clearing {}", view.display()))?;
+    }
+    fs::create_dir_all(&view).with_context(|| format!("creating {}", view.display()))?;
+    let mut staged = 0;
+    for files in crate::net::list_sessions(&paths.net_log_dir()) {
+        let Some(info) = files.load_info() else {
+            continue;
+        };
+        if info.cwd_host != project || !files.summary.exists() {
+            continue;
+        }
+        let target = view.join(format!("{}.summary.json", files.session_id));
+        fs::copy(&files.summary, &target)
+            .with_context(|| format!("copying {}", files.summary.display()))?;
+        staged += 1;
+    }
+    Ok(staged)
 }
 
 /// Make sure the container `.claude.json` says onboarding is done, otherwise
@@ -644,7 +705,7 @@ pub fn execute(
     // Assemble once for the mount list, grant the MCP servers, then assemble
     // again so the session info reports what was actually granted.
     let probe = assemble(cfg, paths, &facts, &git, &req)?;
-    req.mcp = prepare_host_dirs(paths, cfg, &probe.spec)?;
+    req.mcp = prepare_host_dirs(paths, cfg, &probe.spec, &req.toolchains, &facts.cwd)?;
     let assembled = assemble(cfg, paths, &facts, &git, &req)?;
     for w in &assembled.warnings {
         eprintln!("claude_here: note: {w}");
@@ -684,6 +745,7 @@ pub fn execute(
     let _ = fs::remove_file(&gh_file);
     let code = code?;
     if assembled.info.net_capture {
+        crate::net::collect_session_output(paths, &req.session_id)?;
         crate::net::print_exit_summary(paths, &req.session_id, &assembled.info);
         crate::net::prune(paths, cfg.net_retention_days).ok();
     }
@@ -748,6 +810,7 @@ mod tests {
             token_file: Some("/home/axel/.config/claude_here/token".into()),
             empty_file: "/home/axel/.config/claude_here/empty".into(),
             cloud_dirs: vec![],
+            net_view: true,
         }
     }
 
@@ -1037,6 +1100,28 @@ mod tests {
         assert!(!s.contains("NET_ADMIN"));
         assert!(!s.contains("CH_NET_ALLOW"));
         assert!(s.contains("-e CH_NET_MODE=full"));
+        Ok(())
+    }
+
+    #[test]
+    fn bundled_plugin_and_net_view_are_mounted_read_only() -> Result<()> {
+        let a = assemble(
+            &cfg(ConfigFile::default()),
+            &paths(),
+            &facts(),
+            &git(),
+            &req(),
+        )?;
+        let s = a.spec.to_args().join(" ");
+        assert!(
+            s.contains("-v /home/axel/.config/claude_here/plugin:/home/ni/.claude_here/plugin:ro")
+        );
+        assert!(
+            s.contains("-v /home/axel/.config/claude_here/net-view:/home/ni/.claude_here/net:ro")
+        );
+        assert!(s.contains("-e CH_PLUGIN_DIR=/home/ni/.claude_here/plugin"));
+        // The captures themselves must never be visible to the container.
+        assert!(!s.contains("logs/net:"));
         Ok(())
     }
 

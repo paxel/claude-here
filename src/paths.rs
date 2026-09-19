@@ -63,6 +63,23 @@ impl HostPaths {
     }
 
     /// Isolated cache root used when `caches.isolated = true`.
+    /// Generated plugin directory (skills + language server declarations).
+    pub fn plugin_dir(&self) -> PathBuf {
+        self.config_dir.join("plugin")
+    }
+
+    /// Per-session directory the container writes its capture into. Only this
+    /// directory is mounted, so a session can never read another session's
+    /// capture (ADR 0008).
+    pub fn net_out_dir(&self, session_id: &str) -> PathBuf {
+        self.config_dir.join("logs").join("out").join(session_id)
+    }
+
+    /// Per-run directory holding the network summaries this project may read.
+    pub fn net_view_dir(&self) -> PathBuf {
+        self.config_dir.join("net-view")
+    }
+
     pub fn cache_dir(&self) -> PathBuf {
         self.config_dir.join("cache")
     }

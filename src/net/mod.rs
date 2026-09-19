@@ -110,6 +110,36 @@ pub fn human_bytes(b: u64) -> String {
     }
 }
 
+/// Move what the container wrote in its own output directory into the log
+/// directory, then remove the directory. The container only ever sees its own
+/// session, so nothing of an earlier one can be read from inside.
+pub fn collect_session_output(paths: &HostPaths, session_id: &str) -> Result<usize> {
+    let out = paths.net_out_dir(session_id);
+    if !out.exists() {
+        return Ok(0);
+    }
+    let log = paths.net_log_dir();
+    fs::create_dir_all(&log).with_context(|| format!("creating {}", log.display()))?;
+    let mut moved = 0;
+    if let Ok(entries) = fs::read_dir(&out) {
+        for entry in entries.flatten() {
+            let from = entry.path();
+            let Some(name) = from.file_name() else {
+                continue;
+            };
+            let to = log.join(name);
+            if fs::rename(&from, &to).is_err() {
+                // Different filesystems: copy, then drop the original.
+                fs::copy(&from, &to).with_context(|| format!("copying {}", from.display()))?;
+                let _ = fs::remove_file(&from);
+            }
+            moved += 1;
+        }
+    }
+    let _ = fs::remove_dir(&out);
+    Ok(moved)
+}
+
 /// One-line summary printed after the container exits.
 pub fn print_exit_summary(paths: &HostPaths, session_id: &str, info: &SessionInfo) {
     let files = SessionFiles::new(&paths.net_log_dir(), session_id);
