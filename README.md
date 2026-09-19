@@ -302,11 +302,35 @@ Every session also prints one line at exit
  "net_capture":true,"ssh":false,"gh":false}
 ```
 
-and a short paragraph is appended to Claude's system prompt, e.g. for `ro`:
-*"Git mode is 'ro': every .git directory is bind-mounted read-only and
-enforced by the kernel. Committing, staging, checking out, switching branches,
-stashing, resetting and pushing are impossible; do not attempt them … Report
-changed files and let the user commit."*
+and this paragraph is passed to `claude` as `--append-system-prompt` (visible
+in full with `claude_here --dry-run`; it is appended, Claude's own system
+prompt stays intact):
+
+> You are running inside a claude_here Docker sandbox (session `<id>`).
+> Container user '`<user>`' has no sudo and no root. The host working directory
+> `<host cwd>` is mounted at `<container cwd>`; host home paths appear under
+> `/home/<user>`. Only the mounted paths listed in `CLAUDE_HERE_SESSION_INFO`
+> exist here.
+>
+> *ro:* Git mode is 'ro': every .git directory is bind-mounted read-only and
+> enforced by the kernel. Committing, staging, checking out, switching
+> branches, stashing, resetting and pushing are impossible; do not attempt
+> them, do not try to work around this. Report changed files and let the user
+> commit.
+>
+> *commit:* Git mode is 'commit': you may inspect, stage and commit locally.
+> Checkout, switch, branch creation, reset, rebase, merge, stash, tag and any
+> remote operation are denied by the git wrapper; do not attempt them or
+> bypass the wrapper.
+>
+> *full:* Git mode is 'full': git is unrestricted.
+>
+> *(when recording)* All network traffic of this session is recorded for later
+> review.
+
+Everything else Claude reports about the sandbox (missing toolchains, empty
+memory, …) comes from its own probing; nothing is scripted. The text lives in
+`src/session.rs` (`SessionInfo::system_prompt`).
 
 Startup prints the effective setup:
 
