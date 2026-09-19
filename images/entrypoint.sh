@@ -22,8 +22,8 @@ if [ "${CH_NET_CAPTURE}" = "1" ]; then
   mkdir -p "${CAP_DIR}"
   chown netlog:netlog "${CAP_DIR}"
   chmod 700 "${CAP_DIR}"
-  tcpdump -i any -s 512 -U -Z netlog -w "${CAP_DIR}/${CH_SESSION_ID}.pcap" \
-    >/dev/null 2>"${CAP_DIR}/tcpdump.err" &
+  tcpdump -i any -s 512 -U --immediate-mode -Z netlog \
+    -w "${CAP_DIR}/${CH_SESSION_ID}.pcap" >/dev/null 2>"${CAP_DIR}/tcpdump.err" &
   TCPDUMP_PID=$!
 fi
 
@@ -52,6 +52,8 @@ while :; do
 done
 
 if [ -n "${TCPDUMP_PID}" ]; then
+  # let the last packets drain from the kernel buffer before stopping
+  sleep 0.5
   kill -INT "${TCPDUMP_PID}" 2>/dev/null || true
   wait "${TCPDUMP_PID}" 2>/dev/null || true
   /usr/local/lib/claude_here/net-summary.sh \

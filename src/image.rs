@@ -106,7 +106,7 @@ pub fn has_instructions(text: &str) -> bool {
 /// Wrap a user snippet into a complete Dockerfile on top of `parent`.
 pub fn wrap_user_layer(parent: &str, user: &str, snippet: &str) -> String {
     format!(
-        "FROM {parent}\nARG CH_USER={user}\nUSER root\n{snippet}\nUSER root\nENTRYPOINT [\"/usr/bin/tini\", \"--\", \"/usr/local/lib/claude_here/entrypoint.sh\"]\n"
+        "FROM {parent}\nARG CH_USER={user}\nUSER root\n{snippet}\nUSER root\nENTRYPOINT [\"/usr/local/lib/claude_here/entrypoint.sh\"]\n"
     )
 }
 
