@@ -46,14 +46,14 @@ user in the `docker` group, Claude Code installed on the host for the one-time
 `claude setup-token`.
 
 ```
-# prebuilt binary (Linux x86_64/aarch64, macOS arm64/x86_64) into ~/.local/bin
+# from source
+cargo install --git https://github.com/paxel/claude-here
+
+# prebuilt binary (Linux x86_64/aarch64, macOS arm64/x86_64) into ~/.local/bin — available once v0.1.0 is tagged
 curl -fsSL https://github.com/paxel/claude-here/releases/latest/download/install.sh | sh
 
-# or Homebrew
+# Homebrew — available once the formula is published to paxel/homebrew-tap
 brew tap paxel/tap && brew install claude-here
-
-# or from source
-cargo install --git https://github.com/paxel/claude-here
 
 claude_here init
 ```
