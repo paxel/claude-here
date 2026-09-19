@@ -46,16 +46,26 @@ claude_yolo                      # --dangerously-skip-permissions, still sandbox
 
 ## Install
 
-Requirements: Docker with BuildKit (the default for years; the tool sets
-`DOCKER_BUILDKIT=1` itself) or a compatible CLI set via `CLAUDE_HERE_DOCKER`
-that understands `RUN --mount=type=cache`, your user in the `docker` group, and
-Claude Code installed on the host for the one-time `claude setup-token`.
+### What has to be there first
 
-```
-# from source
+| | Container runtime | Notes |
+|---|---|---|
+| **Linux** | `docker-ce` (or podman/nerdctl via `CLAUDE_HERE_DOCKER`) | your user in the `docker` group: `sudo usermod -aG docker $USER`, then log out and back in |
+| **macOS** | Docker Desktop, Colima or OrbStack | there is no `docker` group; the VM runs as you. Colima: `colima start --cpu 4 --memory 8` |
+| **WSL2** | Docker Desktop with WSL integration enabled for your distro, or `docker-ce` installed inside it | see the WSL notes below — they are not optional |
+
+Everywhere: BuildKit (the default for years; the tool sets `DOCKER_BUILDKIT=1`
+itself, and the images use `RUN --mount=type=cache`), and Claude Code on the
+*same* machine for the one-time `claude setup-token`.
+
+### Then
+
+```sh
+# from source — needs a Rust toolchain
 cargo install --git https://github.com/paxel/claude-here
 
-# prebuilt binary (Linux x86_64/aarch64, macOS arm64/x86_64) into ~/.local/bin — available once v0.1.0 is tagged
+# prebuilt binary into ~/.local/bin (Linux x86_64/aarch64, macOS arm64/x86_64)
+# — available once v0.1.0 is tagged
 curl -fsSL https://github.com/paxel/claude-here/releases/latest/download/install.sh | sh
 
 # Homebrew — available once the formula is published to paxel/homebrew-tap
@@ -69,6 +79,37 @@ home), runs `claude setup-token`, seeds the container home from your host
 `~/.claude` (`settings.json`, `CLAUDE.md`, `skills/`, `commands/`, `plugins/`),
 installs fish completions and offers to add `.claude_here/` to your global git
 ignore. The first `claude_here` builds the `base` image locally (a few minutes).
+
+### WSL
+
+WSL2 only — WSL1 has no namespaces or cgroups and cannot run containers.
+
+**Keep the project inside the WSL filesystem** (`~/src/foo`, not
+`/mnt/c/Users/you/src/foo`). A path under `/mnt/c` is a Windows bind mount: it is
+slow, and it does not carry Linux uid/gid. This tool bakes your uid/gid into the
+image and the entrypoint refuses to start on a mismatch, so a project on the
+Windows drive will either fail that check or hand the container files it cannot
+own. The same applies to `~/.config/claude_here` — it belongs in the WSL home.
+
+Install claude_here *inside* the distro, not on Windows: it shells out to
+`docker`, `git` and `id`, and `claude setup-token` has to write into the WSL home
+it will later read from.
+
+Docker Desktop users: enable integration for the distro under *Settings →
+Resources → WSL integration*, otherwise `docker` is not on `PATH` there. If you
+installed `docker-ce` in the distro instead, start it yourself
+(`sudo service docker start`) — systemd is off in WSL unless you enabled it.
+
+### macOS
+
+The container is Linux even on a Mac, which is why **iOS cannot be built in the
+sandbox** — Xcode and the iOS SDKs are macOS-only. Claude can edit `ios/`
+sources; building and signing stay on the host or in CI.
+
+On Apple Silicon everything runs `arm64` natively; every shipped toolchain has an
+`aarch64` build. Give the VM enough memory for the JVM or Flutter toolchains
+(8GB is comfortable) — the container limit set by `--memory` cannot exceed what
+the VM has.
 
 ## Usage
 

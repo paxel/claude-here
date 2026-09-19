@@ -3,9 +3,10 @@
 # other than `none` (ADR 0005).
 ARG BASE=claude_here:base
 FROM ${BASE}
-ARG KUBECTL_VERSION=v1.34.1
+ARG KUBECTL_VERSION=v1.37.0
+# Helm 4 changes CLI behaviour; staying on 3.x until that is a deliberate move.
 ARG HELM_VERSION=v3.16.4
-ARG KUSTOMIZE_VERSION=v5.5.0
+ARG KUSTOMIZE_VERSION=v5.8.1
 
 RUN arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) a=amd64 ;; arm64) a=arm64 ;; *) echo "unsupported arch $arch"; exit 1 ;; esac; \

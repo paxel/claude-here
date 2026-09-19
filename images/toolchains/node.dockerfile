@@ -3,6 +3,7 @@
 # TypeScript language server. Many MCP servers and plugin hooks need node.
 ARG BASE=claude_here:base
 FROM ${BASE}
+# 22 is LTS ("Jod") with support into 2027.
 ARG NODE_MAJOR=22
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \

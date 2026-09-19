@@ -2,7 +2,7 @@
 # go toolchain: Go plus the gopls language server.
 ARG BASE=claude_here:base
 FROM ${BASE}
-ARG GO_VERSION=1.25.1
+ARG GO_VERSION=1.27.1
 # `latest` is the default so a fresh install is current; pin it for a
 # reproducible layer.
 ARG GOPLS_VERSION=latest

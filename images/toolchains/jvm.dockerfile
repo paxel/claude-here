@@ -6,10 +6,14 @@
 # throw away the rest of a long build.
 ARG BASE=claude_here:base
 FROM ${BASE}
+# GraalVM CE stopped publishing jdk-21.0.x tags after 21.0.2 (newer CE builds
+# use graal-25.x naming); this is the last one at this URL pattern.
 ARG GRAALVM_VERSION=21.0.2
-ARG MAVEN_VERSION=3.9.9
+ARG MAVEN_VERSION=3.9.16
+# Gradle 9 is a major step with removed deprecations. Projects use their own
+# wrapper anyway, so this stays on 8.x until someone needs otherwise.
 ARG GRADLE_VERSION=8.14
-ARG KOTLIN_VERSION=2.1.20
+ARG KOTLIN_VERSION=2.4.20
 # ARG, not ENV: build scaffolding has no business in the runtime environment.
 ARG CH_CURL="curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20"
 

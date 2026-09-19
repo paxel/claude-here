@@ -2,7 +2,7 @@
 # take a state lock on a remote backend (ADR 0005).
 ARG BASE=claude_here:base
 FROM ${BASE}
-ARG TERRAFORM_VERSION=1.10.5
+ARG TERRAFORM_VERSION=1.16.3
 
 RUN arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) a=amd64 ;; arm64) a=arm64 ;; *) echo "unsupported arch $arch"; exit 1 ;; esac; \

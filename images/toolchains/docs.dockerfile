@@ -4,10 +4,10 @@
 # image has no java yet, so `--jvm --docs` reuses GraalVM.
 ARG BASE=claude_here:base
 FROM ${BASE}
-ARG PLANTUML_VERSION=1.2025.4
+ARG PLANTUML_VERSION=1.2026.8
 ARG D2_VERSION=0.7.0
-ARG TYPST_VERSION=0.13.1
-ARG PANDOC_VERSION=3.6.3
+ARG TYPST_VERSION=0.15.1
+ARG PANDOC_VERSION=3.11
 
 RUN if ! command -v java >/dev/null 2>&1; then \
       apt-get update \
