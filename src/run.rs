@@ -406,6 +406,7 @@ fn add_cache_mounts(
 /// Ensure host-side directories exist before docker creates them as root.
 pub fn prepare_host_dirs(paths: &HostPaths, cfg: &Config, spec: &RunSpec) -> Result<()> {
     fs::create_dir_all(paths.container_home())?;
+    ensure_onboarded(&paths.container_home().join(".claude.json"))?;
     fs::create_dir_all(paths.net_log_dir())?;
     if !paths.config_dir.join("empty").exists() {
         fs::write(paths.config_dir.join("empty"), "")?;
@@ -420,6 +421,20 @@ pub fn prepare_host_dirs(paths: &HostPaths, cfg: &Config, spec: &RunSpec) -> Res
         }
     }
     Ok(())
+}
+
+/// Make sure the container `.claude.json` says onboarding is done, otherwise
+/// interactive sessions start with the theme/login wizard despite the token.
+fn ensure_onboarded(path: &Path) -> Result<()> {
+    let mut obj = crate::init::read_json_object(path);
+    if obj.get("hasCompletedOnboarding") == Some(&serde_json::Value::Bool(true)) {
+        return Ok(());
+    }
+    obj.insert(
+        "hasCompletedOnboarding".into(),
+        serde_json::Value::Bool(true),
+    );
+    crate::init::write_json_object(path, &obj)
 }
 
 /// Full run: build images, assemble, execute. Returns the container exit code.

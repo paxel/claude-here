@@ -149,7 +149,7 @@ fn obtain_token_interactively() -> Result<String> {
 
 /// Find an `sk-ant-...` token in arbitrary text.
 pub fn extract_token(text: &str) -> Option<String> {
-    text.split(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+    text.split(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '=')
         .find(|w| w.starts_with("sk-ant-") && w.len() > 20)
         .map(str::to_string)
 }
@@ -191,6 +191,7 @@ fn seed_home(paths: &HostPaths, user: &str, items: &[String], reseed: bool) -> R
         copy_tree(&src, &dest.join(item), &rw)?;
         copied.push(item.clone());
     }
+    seed_claude_json(paths, &dest.join(".claude.json"), &rw)?;
     fs::write(&marker, format!("{}\n", copied.join(",")))?;
     println!(
         "home:       {} (seeded: {})",
@@ -209,7 +210,8 @@ fn seed_home(paths: &HostPaths, user: &str, items: &[String], reseed: bool) -> R
     Ok(())
 }
 
-/// Do any seeded plugin hook definitions call node or npx?
+/// Do any seeded plugin hook definitions (`hooks/hooks.json` or inline in
+/// `.claude-plugin/plugin.json`) call node or npx?
 fn plugins_need_node(plugins_dir: &Path) -> bool {
     fn walk(dir: &Path, depth: usize) -> bool {
         if depth > 6 {
@@ -220,11 +222,16 @@ fn plugins_need_node(plugins_dir: &Path) -> bool {
         };
         for entry in entries.flatten() {
             let path = entry.path();
+            if path.file_name().is_some_and(|n| n == "node_modules") {
+                continue;
+            }
             if path.is_dir() {
                 if walk(&path, depth + 1) {
                     return true;
                 }
-            } else if path.file_name().is_some_and(|n| n == "hooks.json")
+            } else if path
+                .file_name()
+                .is_some_and(|n| n == "hooks.json" || n == "plugin.json")
                 && fs::read_to_string(&path)
                     .is_ok_and(|t| t.contains("\"node") || t.contains("\"npx"))
             {
@@ -234,6 +241,64 @@ fn plugins_need_node(plugins_dir: &Path) -> bool {
         false
     }
     walk(&plugins_dir.join("cache"), 0)
+}
+
+/// Preference keys carried over from the host `~/.claude.json`.
+const CLAUDE_JSON_KEYS: &[&str] = &[
+    "theme",
+    "preferredNotifChannel",
+    "editorMode",
+    "autoCompactEnabled",
+    "verbose",
+    "shiftEnterKeyBindingInstalled",
+    "diffTool",
+    "mcpServers",
+];
+
+/// Merge onboarding state and preferences into the container `.claude.json`
+/// so the interactive wizard (theme, login method) does not appear.
+fn seed_claude_json(paths: &HostPaths, dest: &Path, rw: &PathRewriter) -> Result<()> {
+    let host_path = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(|d| PathBuf::from(d).join(".claude.json"))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| paths.home.join(".claude.json"));
+    let host: serde_json::Map<String, serde_json::Value> = fs::read_to_string(&host_path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&rw.rewrite_text(&t)).ok())
+        .unwrap_or_default();
+    let mut current = read_json_object(dest);
+    for key in CLAUDE_JSON_KEYS {
+        if let Some(v) = host.get(*key) {
+            current.insert((*key).to_string(), v.clone());
+        }
+    }
+    current.insert(
+        "hasCompletedOnboarding".into(),
+        serde_json::Value::Bool(true),
+    );
+    write_json_object(dest, &current)
+}
+
+/// Read a JSON object file; missing or invalid yields an empty object.
+pub fn read_json_object(path: &Path) -> serde_json::Map<String, serde_json::Value> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+/// Write a JSON object file with mode 0600.
+pub fn write_json_object(
+    path: &Path,
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, serde_json::to_string_pretty(obj)?)
+        .with_context(|| format!("writing {}", path.display()))?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
 }
 
 /// Recursive copy; small UTF-8 files get host-home paths rewritten.
@@ -258,6 +323,10 @@ pub fn copy_tree(src: &Path, dest: &Path, rw: &PathRewriter) -> Result<()> {
     }
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
+    }
+    // Reseeding overwrites; read-only files (git pack files) must go first.
+    if dest.exists() {
+        fs::remove_file(dest).with_context(|| format!("replacing {}", dest.display()))?;
     }
     if meta.len() <= REWRITE_LIMIT {
         let bytes = fs::read(src)?;
@@ -340,6 +409,23 @@ mod tests {
             Some("sk-ant-oat01-abcdefghijklmnopqrstuvwxyz0123456789")
         );
         assert_eq!(extract_token("nothing here"), None);
+        // the env-file format written by write_token must be recognised again
+        assert_eq!(
+            extract_token("CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-abcdefghijklmnopqrstuvwxyz\n")
+                .as_deref(),
+            Some("sk-ant-oat01-abcdefghijklmnopqrstuvwxyz")
+        );
+    }
+
+    #[test]
+    fn existing_token_file_is_kept() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let p = dir.path().join("token");
+        write_token(&p, "sk-ant-oat01-abcdefghijklmnopqrstuvwxyz")?;
+        assert!(token_file_valid(&p));
+        fs::write(&p, "CLAUDE_CODE_OAUTH_TOKEN=dummy\n")?;
+        assert!(!token_file_valid(&p));
+        Ok(())
     }
 
     #[test]
@@ -352,6 +438,33 @@ mod tests {
             "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-x\n"
         );
         assert_eq!(fs::metadata(&p)?.permissions().mode() & 0o777, 0o600);
+        Ok(())
+    }
+
+    #[test]
+    fn claude_json_seed_sets_onboarding_and_copies_prefs() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home)?;
+        fs::write(
+            home.join(".claude.json"),
+            format!(
+                r#"{{"theme":"dark","autoUpdates":false,"mcpServers":{{"x":{{"command":"{}/bin/x"}}}},"secret":1}}"#,
+                home.display()
+            ),
+        )?;
+        let paths = HostPaths::new(home.clone(), dir.path().join("cfg"));
+        let dest = dir.path().join("cfg").join("home").join(".claude.json");
+        fs::create_dir_all(dest.parent().unwrap_or(dir.path()))?;
+        fs::write(&dest, r#"{"machineID":"m"}"#)?;
+        seed_claude_json(&paths, &dest, &PathRewriter::new(&home, "ni"))?;
+        let got = read_json_object(&dest);
+        assert_eq!(got["hasCompletedOnboarding"], true);
+        assert_eq!(got["theme"], "dark");
+        assert_eq!(got["machineID"], "m");
+        assert!(got.get("secret").is_none());
+        assert!(got.get("autoUpdates").is_none());
+        assert_eq!(got["mcpServers"]["x"]["command"], "/home/ni/bin/x");
         Ok(())
     }
 
@@ -375,6 +488,12 @@ mod tests {
             fs::read(dest.join("sub").join("bin"))?,
             vec![0u8, 159, 146, 150]
         );
+        // reseed over a read-only copy must succeed
+        fs::set_permissions(
+            dest.join("settings.json"),
+            fs::Permissions::from_mode(0o444),
+        )?;
+        copy_tree(&src, &dest, &PathRewriter::new("/home/axel", "ni"))?;
         Ok(())
     }
 }
