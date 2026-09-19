@@ -79,6 +79,77 @@ Everything that is not a `claude_here` flag is forwarded verbatim to `claude`
 inside the container (`-p`, `--resume`, `--model`, `-c`, …). `--` forces
 forwarding. `--help`/`--version` outside `--` refer to `claude_here`.
 
+### Examples
+
+```sh
+# first time on a machine
+claude_here init                          # token, config, seeded home, fish completions
+cd ~/src/foo && claude_here               # builds claude_here:base-u<uid> once, then starts Claude
+
+# one-shot prompts; everything after the tool flags goes to claude
+claude_here -p "summarize the failing tests"
+claude_here --resume                      # claude's own flags pass straight through
+claude_here -- --help                     # claude's help (without -- it is claude_here's)
+
+# toolchains and add-ons
+claude_here --image rust                  # cargo/clippy/rustfmt, ~/.cargo caches mounted
+claude_here --image jvm --npm             # GraalVM/Maven/Gradle/kotlinc + Node 22 with npm/npx
+claude_here --uv                          # uv/uvx instead of pip
+claude_here --image rust --npm --uv --save   # remember for this project (.claude_here/config.toml)
+claude_here config set node true --global # every project gets node
+
+# git modes
+claude_here                               # ro: .git read-only, kernel enforced
+claude_here --git commit                  # Claude may `git add` and `git commit`, nothing else
+claude_here --git full --ssh --gh         # unrestricted git, ssh agent forwarded, gh config mounted
+claude_yolo --git full --i-know           # yolo + full needs an explicit opt-in
+
+# extra mounts and environment
+claude_here --mount ~/notes               # read-only at /home/ni/notes
+claude_here --mount-rw /srv/data:/data    # read-write at a chosen container path
+claude_here --env GITHUB_TOKEN            # pass one host variable through
+claude_here --env RUST_LOG=debug          # set a literal
+claude_here --docker-arg --add-host --docker-arg db:10.0.0.5   # raw docker flags
+
+# resources, images, debugging
+claude_here --memory 8g --cpus 4
+claude_here --rebuild                     # rebuild the whole chain now
+claude_here update                        # new Claude Code release: rebuild base without cache
+claude_here build --image jvm             # pre-build without starting a session
+claude_here --dry-run -p x                # print the docker run command and exit
+claude_here --image ghcr.io/me/my-dev:latest   # bring your own image (must have claude in PATH)
+
+# what did it talk to?
+claude_here net last
+claude_here net top --days 30 --project
+claude_here net grep pypi.org
+claude_here net shark                     # termshark on the last capture
+claude_here net prune --days 7
+```
+
+A project that always wants the same setup:
+
+```toml
+# .claude_here/config.toml
+image = "jvm"
+node = true
+git_mode = "commit"
+env = ["MAVEN_OPTS=-Xmx2g", "SONAR_TOKEN"]
+
+[[mounts]]
+path = "~/company/certs"
+mode = "ro"
+
+[tls]
+truststore = "~/company/certs/cacerts"
+```
+
+```dockerfile
+# .claude_here/Dockerfile — extra tools for this project only
+RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler && rm -rf /var/lib/apt/lists/*
+RUN npm install -g @anthropic-ai/mcp-inspector
+```
+
 ### Flags
 
 | Flag | Meaning |
@@ -146,8 +217,14 @@ m2_exclude = ["settings.xml"]
 truststore = "~/certs/cacerts"   # wired into JAVA_TOOL_OPTIONS
 ```
 
-`claude_here config show|set KEY VALUE [--global]|path`, or append `--save`
-to any run.
+```sh
+claude_here config show                       # merged file view + effective values
+claude_here config set git_mode commit        # project
+claude_here config set caches.isolated true --global
+claude_here config set env '["EDITOR=nano","GITHUB_TOKEN"]'
+claude_here config path
+claude_here --image rust --git commit --save  # same thing from a run
+```
 
 ### Images
 
@@ -193,13 +270,49 @@ claude_here net list | prune
 
 TLS payloads are not decrypted; you see host names (SNI/DNS), endpoints,
 connection counts and bytes. Plain HTTP requests are listed with method and
-URL.
+URL. Example:
+
+```
+$ claude_here net last
+session  20260919-095014-8865  (2026-09-19 09:50 UTC)
+project  /home/axel/src/foo
+image    claude_here:base-u1000   git ro
+traffic  516 packets, 624.2 KB up / 189.9 KB down, 5 dns queries
+┌───────────────────┬───────────────────┬───────┬──────────┬──────────┐
+│ host              ┆ ip:port           ┆ conns ┆ up       ┆ down     │
+╞═══════════════════╪═══════════════════╪═══════╪══════════╪══════════╡
+│ api.anthropic.com ┆ 160.79.104.10:443 ┆ 7     ┆ 624.2 KB ┆ 189.9 KB │
+└───────────────────┴───────────────────┴───────┴──────────┴──────────┘
+pcap     /home/axel/.config/claude_here/logs/net/20260919-095014-8865.pcap
+```
+
+Every session also prints one line at exit
+(`claude_here: net: 1 host(s), 7 connection(s), 624.2 KB up / 189.9 KB down`).
 
 ### What Claude is told
 
-`CLAUDE_HERE_SESSION_INFO` (JSON: session id, image, git mode, mounts, …) is
-exported inside the container and a short paragraph describing the sandbox and
-the git mode is appended to the system prompt.
+`CLAUDE_HERE_SESSION_INFO` is exported inside the container:
+
+```json
+{"tool":"claude_here","version":"0.1.0","session_id":"20260919-095014-8865",
+ "image":"claude_here:base-u1000","git_mode":"ro","yolo":false,"user":"ni",
+ "cwd_host":"/home/axel/src/foo","cwd":"/home/ni/src/foo",
+ "mounts":[{"host":"/home/axel/src/foo","container":"/home/ni/src/foo","mode":"rw"},
+           {"host":"/home/axel/src/foo/.git","container":"/home/ni/src/foo/.git","mode":"ro"}],
+ "net_capture":true,"ssh":false,"gh":false}
+```
+
+and a short paragraph is appended to Claude's system prompt, e.g. for `ro`:
+*"Git mode is 'ro': every .git directory is bind-mounted read-only and
+enforced by the kernel. Committing, staging, checking out, switching branches,
+stashing, resetting and pushing are impossible; do not attempt them … Report
+changed files and let the user commit."*
+
+Startup prints the effective setup:
+
+```
+claude_here: session 20260919-095014-8865 | image claude_here:base-u1000 | git ro (1 .git dir(s) read-only) | net recorded
+```
 
 ## Uninstall
 
