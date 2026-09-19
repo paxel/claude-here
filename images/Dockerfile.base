@@ -17,7 +17,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN echo 'wireshark-common wireshark-common/install-setuid boolean false' | debconf-set-selections \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
-      bash ca-certificates curl git gnupg less locales nano procps \
+      bash ca-certificates curl git gh gnupg less locales nano procps \
       ripgrep fd-find jq unzip zip \
       python3 python3-pip python3-venv \
       build-essential pkg-config libssl-dev \

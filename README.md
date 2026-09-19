@@ -234,7 +234,7 @@ user, uid and gid are baked in.
 
 | Variant | Adds |
 |---------|------|
-| `base` | Debian trixie slim, Claude Code (native installer), git, curl, ripgrep, fd, jq, python3 + pip/venv, build-essential, pkg-config, libssl-dev, openssh-client, tcpdump, tshark, termshark |
+| `base` | Debian trixie slim, Claude Code (native installer), git, gh, curl, ripgrep, fd, jq, python3 + pip/venv, build-essential, pkg-config, libssl-dev, openssh-client, tcpdump, tshark, termshark |
 | `rust` | rustup stable with clippy and rustfmt; host `~/.cargo/registry` and `~/.cargo/git` mounted |
 | `jvm` | GraalVM CE 21 (JDK + native-image), Maven, Gradle, kotlinc; host `~/.m2` and `~/.gradle` mounted |
 
