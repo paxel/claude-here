@@ -26,4 +26,6 @@ locked design decisions before proposing structural changes.
 * A new toolchain is a `images/toolchains/<name>.dockerfile` plus one `Toolchain` entry and a flag in `cli.rs`; give it a unique `order` and put implied toolchains before it.
 * The three restriction axes (`git_mode`, `cloud_mode`, `net_mode`) are published by the root phase to `/etc/claude_here/*`, never taken from the environment inside the container, and each is stated in `SessionInfo::system_prompt`.
 * `cargo test` reads `CLAUDE_CONFIG_DIR` in one init test; run it with that variable unset.
+* Image files use BuildKit cache mounts; a file with `RUN --mount` needs `# syntax=docker/dockerfile:1.7` on line 1, and `Docker::run_build` sets `DOCKER_BUILDKIT=1`.
+* Never `chown -R` a tree after filling it: own the directory first and write as the target user, otherwise the whole tree is copied into another layer. Tests enforce both rules.
 * Commits: one-line summary, no trailers.

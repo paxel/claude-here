@@ -196,12 +196,19 @@ impl Builder<'_> {
         ctx.write("git-shim.sh", GIT_SHIM)?;
         ctx.write("cloud-shim.sh", CLOUD_SHIM)?;
         ctx.write("net-allowlist.sh", NET_ALLOWLIST)?;
-        let build_args = vec![
+        let mut build_args = vec![
             ("CH_USER".to_string(), id.user.clone()),
             ("CH_UID".to_string(), id.uid.to_string()),
             ("CH_GID".to_string(), id.gid.to_string()),
             ("CLAUDE_VERSION".to_string(), id.claude_version.clone()),
         ];
+        if self.policy.refresh_base {
+            // Invalidates the Claude install step and nothing before it.
+            build_args.push((
+                "CLAUDE_REFRESH".to_string(),
+                crate::session::now_secs().to_string(),
+            ));
+        }
         self.docker.build(
             &ctx.dir,
             &tag,
@@ -400,6 +407,54 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// `RUN --mount` is a BuildKit feature and needs the syntax directive on
+    /// the very first line, or the build fails with a parse error.
+    #[test]
+    fn cache_mounts_come_with_the_syntax_directive() {
+        let mut files: Vec<(&str, &str)> = vec![("Dockerfile.base", DOCKERFILE_BASE)];
+        for t in crate::toolchain::TOOLCHAINS {
+            files.push((t.name, t.dockerfile));
+        }
+        for (name, text) in files {
+            if !text.contains("--mount=type=cache") {
+                continue;
+            }
+            assert!(
+                text.starts_with("# syntax=docker/dockerfile:"),
+                "{name} uses a cache mount without the syntax directive"
+            );
+        }
+    }
+
+    /// Ownership must be established before a tree is filled, never after: a
+    /// `chown -R` over a checkout copies every file into a new layer.
+    #[test]
+    fn large_trees_are_not_chowned_after_the_fact() {
+        for t in crate::toolchain::TOOLCHAINS {
+            for line in t.dockerfile.lines() {
+                let line = line.trim();
+                assert!(
+                    line.starts_with('#') || !line.contains("chown -R"),
+                    "{}: {line}",
+                    t.name
+                );
+            }
+        }
+    }
+
+    /// `update` must bust the Claude install step only, so apt and the
+    /// downloads survive.
+    #[test]
+    fn base_busts_only_the_claude_step_on_refresh() {
+        assert!(DOCKERFILE_BASE.contains("ARG CLAUDE_REFRESH"));
+        let (before, after) = DOCKERFILE_BASE
+            .split_once("ARG CLAUDE_REFRESH")
+            .unwrap_or_default();
+        assert!(before.contains("apt-get install"), "apt must come first");
+        assert!(after.contains("claude.ai/install.sh"));
+        assert!(after.contains("${CLAUDE_REFRESH}"), "the arg must be used");
     }
 
     #[test]

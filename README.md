@@ -46,9 +46,10 @@ claude_yolo                      # --dangerously-skip-permissions, still sandbox
 
 ## Install
 
-Requirements: Docker (or a compatible CLI set via `CLAUDE_HERE_DOCKER`), your
-user in the `docker` group, Claude Code installed on the host for the one-time
-`claude setup-token`.
+Requirements: Docker with BuildKit (the default for years; the tool sets
+`DOCKER_BUILDKIT=1` itself) or a compatible CLI set via `CLAUDE_HERE_DOCKER`
+that understands `RUN --mount=type=cache`, your user in the `docker` group, and
+Claude Code installed on the host for the one-time `claude setup-token`.
 
 ```
 # from source
@@ -322,8 +323,10 @@ On top of the chain:
 * `.claude_here/Dockerfile` — project layer on top of that.
 
 Layers are rebuilt automatically when their content changes (hash stored as an
-image label). `claude_here update` rebuilds the base without cache to pick up
-a new Claude Code release; pin one with `claude_version = "1.2.3"`.
+image label). `claude_here update` invalidates only the step that installs
+Claude Code, so apt and the toolchain downloads are not repeated; pin a version
+with `claude_version = "1.2.3"`. Package downloads (apt, pip, npm, Go modules)
+live in BuildKit cache mounts, so a rebuilt layer re-downloads nothing.
 
 **iOS cannot be built in the sandbox.** Xcode and the iOS SDKs are macOS-only
 and the container is Debian even on a Mac. Claude can edit `ios/` sources and

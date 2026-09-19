@@ -171,6 +171,18 @@ impl Docker {
     }
 
     /// Run interactively, inheriting stdio; returns the exit code.
+    /// Run with inherited stdio and BuildKit enabled. Cache mounts in the
+    /// Dockerfiles need BuildKit; docker has defaulted to it for years, but an
+    /// older daemon would silently fail on `RUN --mount` without this.
+    pub fn run_build(&self, args: &[String]) -> Result<i32> {
+        let status = Command::new(&self.binary)
+            .args(args)
+            .env("DOCKER_BUILDKIT", "1")
+            .status()
+            .with_context(|| format!("executing {} {}", self.binary, args.join(" ")))?;
+        Ok(status.code().unwrap_or(1))
+    }
+
     pub fn run_inherit(&self, args: &[String]) -> Result<i32> {
         let status = Command::new(&self.binary)
             .args(args)
@@ -223,7 +235,9 @@ impl Docker {
     ) -> Result<()> {
         let mut args: Vec<String> = vec!["build".into(), "-t".into(), tag.into()];
         if refresh {
-            args.extend(["--no-cache".into(), "--pull".into()]);
+            // No `--no-cache`: the Dockerfile busts only the step that installs
+            // Claude Code (CLAUDE_REFRESH), so apt and the downloads survive.
+            args.push("--pull".into());
         }
         for (k, v) in build_args {
             args.extend(["--build-arg".into(), format!("{k}={v}")]);
@@ -232,7 +246,7 @@ impl Docker {
             args.extend(["--label".into(), format!("{k}={v}")]);
         }
         args.push(context.display().to_string());
-        let code = self.run_inherit(&args)?;
+        let code = self.run_build(&args)?;
         if code != 0 {
             bail!("docker build of {tag} failed (exit {code})");
         }

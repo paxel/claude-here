@@ -1,5 +1,10 @@
+# syntax=docker/dockerfile:1.7
 # claude_here base image: Debian slim + Claude Code (native installer) +
 # common tooling + tcpdump/tshark for per-session network capture.
+#
+# The apt lists and archives live in BuildKit cache mounts, so a rebuild of this
+# layer re-downloads nothing. That needs BuildKit, which the tool forces with
+# DOCKER_BUILDKIT=1.
 FROM debian:trixie-slim
 
 ARG CH_USER=ni
@@ -14,11 +19,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=en_US.UTF-8 \
     DISABLE_AUTOUPDATER=1
 
-# Transient network failures must not throw away a long image build.
+# Transient network failures must not throw away a long image build, and the
+# downloaded archives must survive so the cache mount below is worth having
+# (the docker base image otherwise deletes them after every install).
 RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' \
-      > /etc/apt/apt.conf.d/80-claude-here-retries
+      > /etc/apt/apt.conf.d/80-claude-here-retries \
+ && printf 'Binary::apt::APT::Keep-Downloaded-Packages "true";\n' \
+      > /etc/apt/apt.conf.d/81-claude-here-keep-cache
 
-RUN echo 'wireshark-common wireshark-common/install-setuid boolean false' | debconf-set-selections \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    echo 'wireshark-common wireshark-common/install-setuid boolean false' | debconf-set-selections \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
       bash ca-certificates curl git gh gnupg less locales nano procps \
@@ -28,7 +39,6 @@ RUN echo 'wireshark-common wireshark-common/install-setuid boolean false' | debc
       openssh-client \
       tcpdump tshark util-linux \
       dnsmasq ipset iptables \
- && rm -rf /var/lib/apt/lists/* \
  && ln -s /usr/bin/fdfind /usr/local/bin/fd \
  && sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
  && locale-gen
@@ -50,8 +60,12 @@ RUN (getent group "${CH_GID}" >/dev/null || groupadd -g "${CH_GID}" "${CH_USER}"
  && chown -R "${CH_UID}:${CH_GID}" "/home/${CH_USER}"
 
 # Claude Code native binary, installed into the sandbox user's home.
+# CLAUDE_REFRESH busts the cache for this step alone: `claude_here update` wants
+# a new Claude release, not a new apt run.
+ARG CLAUDE_REFRESH=stable
 USER ${CH_USER}
-RUN curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 https://claude.ai/install.sh | bash -s -- "${CLAUDE_VERSION}" \
+RUN echo "claude refresh: ${CLAUDE_REFRESH}" \
+ && curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 https://claude.ai/install.sh | bash -s -- "${CLAUDE_VERSION}" \
  && "/home/${CH_USER}/.local/bin/claude" --version
 USER root
 
