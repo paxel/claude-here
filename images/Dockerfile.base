@@ -58,7 +58,7 @@ RUN chmod 755 /usr/local/lib/claude_here/*.sh /usr/local/bin/git
 # Cloud shims live in a directory that comes first on PATH, so they are found
 # before the real binaries a cloud toolchain installs into /usr/local/bin.
 # dnsmasq is only started by the entrypoint in net mode allowlist.
-RUN printf 'conf-dir=/etc/dnsmasq.d,.dpkg-dist,.dpkg-old,.dpkg-new\n' > /etc/dnsmasq.conf \
+RUN printf 'conf-dir=/etc/dnsmasq.d/,*.conf\n' > /etc/dnsmasq.conf \
  && mkdir -p /etc/dnsmasq.d
 
 RUN mkdir -p /usr/local/lib/claude_here/shims \

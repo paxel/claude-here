@@ -13,7 +13,7 @@ set -eu
 DOMAINS="${1:-}"
 SET4=ch_allow
 SET6=ch_allow6
-CONF=/etc/dnsmasq.d/claude_here.conf
+CONF=/etc/dnsmasq.d/claude_here.conf  # must end in .conf: see conf-dir in the base image
 
 if [ -z "${DOMAINS}" ]; then
   echo "claude_here: net allowlist requested but the list is empty" >&2

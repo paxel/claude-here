@@ -190,7 +190,7 @@ pub fn assemble(
         mounts.push(Mount::rw(paths.net_out_dir(&req.session_id), NET_OUT_DIR));
     }
 
-    add_bundled_mounts(paths, facts, &chome, &mut mounts, &mut env);
+    add_bundled_mounts(paths, facts, req, &chome, &mut mounts, &mut env);
     add_extra_mounts(cfg, paths, &rw, &mut mounts);
     add_cache_mounts(
         cfg,
@@ -353,6 +353,7 @@ fn env_files(token_file: PathBuf, gh_file: Option<PathBuf>) -> Vec<PathBuf> {
 fn add_bundled_mounts(
     paths: &HostPaths,
     facts: &HostFacts,
+    req: &RunRequest,
     chome: &Path,
     mounts: &mut Vec<Mount>,
     env: &mut Vec<(String, String)>,
@@ -361,7 +362,10 @@ fn add_bundled_mounts(
     mounts.push(Mount::ro(paths.plugin_dir(), &plugin));
     env.push(("CH_PLUGIN_DIR".to_string(), plugin.display().to_string()));
     if facts.net_view {
-        mounts.push(Mount::ro(paths.net_view_dir(), chome.join(NET_VIEW_DIR)));
+        mounts.push(Mount::ro(
+            paths.net_view_dir(&req.session_id),
+            chome.join(NET_VIEW_DIR),
+        ));
     }
 }
 
@@ -597,6 +601,7 @@ pub fn prepare_host_dirs(
     cfg: &Config,
     spec: &RunSpec,
     chain: &[&Toolchain],
+    session_id: &str,
     project: &Path,
 ) -> Result<Vec<String>> {
     fs::create_dir_all(paths.container_home())?;
@@ -616,7 +621,7 @@ pub fn prepare_host_dirs(
         fs::create_dir_all(paths.cache_dir())?;
     }
     crate::plugin::generate(&paths.plugin_dir(), chain)?;
-    stage_net_summaries(paths, project)?;
+    stage_net_summaries(paths, session_id, project)?;
     for m in &spec.mounts {
         if !m.read_only && !m.host.exists() {
             fs::create_dir_all(&m.host)
@@ -630,8 +635,8 @@ pub fn prepare_host_dirs(
 /// files of *this* project and nothing else. The pcap files never travel — they
 /// are captured with `-s 512` and therefore contain request headers, including
 /// `Authorization` — and neither do other projects' sessions (ADR 0008).
-fn stage_net_summaries(paths: &HostPaths, project: &Path) -> Result<usize> {
-    let view = paths.net_view_dir();
+fn stage_net_summaries(paths: &HostPaths, session_id: &str, project: &Path) -> Result<usize> {
+    let view = paths.net_view_dir(session_id);
     if view.exists() {
         fs::remove_dir_all(&view).with_context(|| format!("clearing {}", view.display()))?;
     }
@@ -705,7 +710,14 @@ pub fn execute(
     // Assemble once for the mount list, grant the MCP servers, then assemble
     // again so the session info reports what was actually granted.
     let probe = assemble(cfg, paths, &facts, &git, &req)?;
-    req.mcp = prepare_host_dirs(paths, cfg, &probe.spec, &req.toolchains, &facts.cwd)?;
+    req.mcp = prepare_host_dirs(
+        paths,
+        cfg,
+        &probe.spec,
+        &req.toolchains,
+        &req.session_id,
+        &facts.cwd,
+    )?;
     let assembled = assemble(cfg, paths, &facts, &git, &req)?;
     for w in &assembled.warnings {
         eprintln!("claude_here: note: {w}");
@@ -743,6 +755,7 @@ pub fn execute(
     }
     let code = docker.run_inherit(&assembled.spec.to_args());
     let _ = fs::remove_file(&gh_file);
+    let _ = fs::remove_dir_all(paths.net_view_dir(&req.session_id));
     let code = code?;
     if assembled.info.net_capture {
         crate::net::collect_session_output(paths, &req.session_id)?;
@@ -1116,9 +1129,9 @@ mod tests {
         assert!(
             s.contains("-v /home/axel/.config/claude_here/plugin:/home/ni/.claude_here/plugin:ro")
         );
-        assert!(
-            s.contains("-v /home/axel/.config/claude_here/net-view:/home/ni/.claude_here/net:ro")
-        );
+        assert!(s.contains(
+            "-v /home/axel/.config/claude_here/logs/view/20260919-120000-abcd:/home/ni/.claude_here/net:ro"
+        ));
         assert!(s.contains("-e CH_PLUGIN_DIR=/home/ni/.claude_here/plugin"));
         // The captures themselves must never be visible to the container.
         assert!(!s.contains("logs/net:"));

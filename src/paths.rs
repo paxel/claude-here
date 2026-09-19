@@ -75,9 +75,11 @@ impl HostPaths {
         self.config_dir.join("logs").join("out").join(session_id)
     }
 
-    /// Per-run directory holding the network summaries this project may read.
-    pub fn net_view_dir(&self) -> PathBuf {
-        self.config_dir.join("net-view")
+    /// Per-session directory holding the network summaries this project may
+    /// read. Per session, so two concurrent runs cannot clear each other's
+    /// mount source.
+    pub fn net_view_dir(&self, session_id: &str) -> PathBuf {
+        self.config_dir.join("logs").join("view").join(session_id)
     }
 
     pub fn cache_dir(&self) -> PathBuf {
