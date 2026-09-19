@@ -22,7 +22,8 @@ if [ "${CH_NET_CAPTURE}" = "1" ]; then
   mkdir -p "${CAP_DIR}"
   chown netlog:netlog "${CAP_DIR}"
   chmod 700 "${CAP_DIR}"
-  tcpdump -i any -s 512 -U --immediate-mode -Z netlog \
+  # setsid: own session, so a Ctrl-C typed into Claude does not reach tcpdump
+  setsid tcpdump -i any -s 512 -U --immediate-mode -Z netlog \
     -w "${CAP_DIR}/${CH_SESSION_ID}.pcap" >/dev/null 2>"${CAP_DIR}/tcpdump.err" &
   TCPDUMP_PID=$!
 fi

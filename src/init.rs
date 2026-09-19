@@ -90,7 +90,7 @@ fn ensure_file(path: &Path, content: &str) -> Result<()> {
 
 fn setup_token(paths: &HostPaths, args: &InitArgs) -> Result<()> {
     let token_file = paths.token_file();
-    if token_file.exists() && args.token.is_none() && !args.token_stdin {
+    if args.token.is_none() && !args.token_stdin && token_file_valid(&token_file) {
         println!("token:      {} (exists, keeping)", token_file.display());
         return Ok(());
     }
@@ -111,30 +111,35 @@ fn setup_token(paths: &HostPaths, args: &InitArgs) -> Result<()> {
     Ok(())
 }
 
-/// Runs `claude setup-token`, shows its output and extracts the token.
+/// An existing token file counts only when it holds a real-looking token.
+fn token_file_valid(path: &Path) -> bool {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|t| extract_token(&t))
+        .is_some()
+}
+
+/// Runs `claude setup-token` with the terminal attached, then asks for the
+/// token it printed (the flow is interactive; its output is not scraped).
 fn obtain_token_interactively() -> Result<String> {
     println!("running `claude setup-token` (opens a browser; requires a Claude subscription)...");
-    let out = Command::new("claude")
+    let status = Command::new("claude")
         .arg("setup-token")
         .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .stdout(Stdio::piped())
-        .output()
+        .status()
         .context("running `claude setup-token` (is claude installed on the host?)")?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    if let Some(t) = extract_token(&stdout) {
-        return Ok(t);
+    if !status.success() {
+        eprintln!("claude setup-token exited with {status}; you can still paste a token");
     }
-    if !stdout.trim().is_empty() {
-        println!("{}", stdout.trim());
-    }
-    print!("paste the token: ");
+    print!("paste the token printed above: ");
     io::stdout().flush()?;
     let mut line = String::new();
     io::stdin().lock().read_line(&mut line)?;
     match extract_token(&line) {
         Some(t) => Ok(t),
-        None => bail!("no token found in input"),
+        None => bail!("no token found in input (expected something starting with sk-ant-)"),
     }
 }
 
@@ -192,7 +197,40 @@ fn seed_home(paths: &HostPaths, user: &str, items: &[String], reseed: bool) -> R
             copied.join(", ")
         }
     );
+    if plugins_need_node(&dest.join("plugins")) {
+        println!(
+            "note:       seeded plugin hooks use node/npx, which the base image does not ship;\n            uncomment the nodejs line in {} to add it",
+            paths.user_dockerfile().display()
+        );
+    }
     Ok(())
+}
+
+/// Do any seeded plugin hook definitions call node or npx?
+fn plugins_need_node(plugins_dir: &Path) -> bool {
+    fn walk(dir: &Path, depth: usize) -> bool {
+        if depth > 6 {
+            return false;
+        }
+        let Ok(entries) = fs::read_dir(dir) else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if walk(&path, depth + 1) {
+                    return true;
+                }
+            } else if path.file_name().is_some_and(|n| n == "hooks.json")
+                && fs::read_to_string(&path)
+                    .is_ok_and(|t| t.contains("\"node") || t.contains("\"npx"))
+            {
+                return true;
+            }
+        }
+        false
+    }
+    walk(&plugins_dir.join("cache"), 0)
 }
 
 /// Recursive copy; small UTF-8 files get host-home paths rewritten.
