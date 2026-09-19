@@ -261,20 +261,73 @@ const CLAUDE_JSON_KEYS: &[&str] = &[
     "verbose",
     "shiftEnterKeyBindingInstalled",
     "diffTool",
-    "mcpServers",
 ];
+
+/// Path of the host `.claude.json`, honouring `CLAUDE_CONFIG_DIR`.
+fn host_claude_json(paths: &HostPaths) -> PathBuf {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(|d| PathBuf::from(d).join(".claude.json"))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| paths.home.join(".claude.json"))
+}
+
+/// Host `.claude.json` as an object, with host paths rewritten to container ones.
+fn host_claude_json_object(
+    paths: &HostPaths,
+    rw: &PathRewriter,
+) -> serde_json::Map<String, serde_json::Value> {
+    fs::read_to_string(host_claude_json(paths))
+        .ok()
+        .and_then(|t| serde_json::from_str(&rw.rewrite_text(&t)).ok())
+        .unwrap_or_default()
+}
+
+/// Make the container `.claude.json` hold exactly the MCP servers that were
+/// granted for this run, copied from the host configuration. Nothing is
+/// inherited: an MCP server can reach past every shim in this tool, so it is a
+/// granted capability, not a default (ADR 0007).
+pub fn sync_mcp_servers(
+    paths: &HostPaths,
+    dest: &Path,
+    rw: &PathRewriter,
+    allowed: &[String],
+) -> Result<Vec<String>> {
+    let mut current = read_json_object(dest);
+    if allowed.is_empty() {
+        if current.remove("mcpServers").is_none() {
+            return Ok(Vec::new());
+        }
+        write_json_object(dest, &current)?;
+        return Ok(Vec::new());
+    }
+    let host = host_claude_json_object(paths, rw);
+    let available = host.get("mcpServers").and_then(|v| v.as_object());
+    let mut granted = serde_json::Map::new();
+    let mut missing = Vec::new();
+    for name in allowed {
+        match available.and_then(|m| m.get(name)) {
+            Some(v) => {
+                granted.insert(name.clone(), v.clone());
+            }
+            None => missing.push(name.clone()),
+        }
+    }
+    let names: Vec<String> = granted.keys().cloned().collect();
+    current.insert("mcpServers".into(), serde_json::Value::Object(granted));
+    write_json_object(dest, &current)?;
+    if !missing.is_empty() {
+        eprintln!(
+            "claude_here: note: mcp server(s) not found in the host configuration: {}",
+            missing.join(", ")
+        );
+    }
+    Ok(names)
+}
 
 /// Merge onboarding state and preferences into the container `.claude.json`
 /// so the interactive wizard (theme, login method) does not appear.
 fn seed_claude_json(paths: &HostPaths, dest: &Path, rw: &PathRewriter) -> Result<()> {
-    let host_path = std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(|d| PathBuf::from(d).join(".claude.json"))
-        .filter(|p| p.exists())
-        .unwrap_or_else(|| paths.home.join(".claude.json"));
-    let host: serde_json::Map<String, serde_json::Value> = fs::read_to_string(&host_path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&rw.rewrite_text(&t)).ok())
-        .unwrap_or_default();
+    let host = host_claude_json_object(paths, rw);
     let mut current = read_json_object(dest);
     for key in CLAUDE_JSON_KEYS {
         if let Some(v) = host.get(*key) {
@@ -473,7 +526,45 @@ mod tests {
         assert_eq!(got["machineID"], "m");
         assert!(got.get("secret").is_none());
         assert!(got.get("autoUpdates").is_none());
+        assert!(
+            got.get("mcpServers").is_none(),
+            "mcp servers must not be inherited"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mcp_servers_are_granted_by_name_only() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home)?;
+        fs::write(
+            home.join(".claude.json"),
+            format!(
+                r#"{{"mcpServers":{{"x":{{"command":"{}/bin/x"}},"y":{{"command":"/bin/y"}}}}}}"#,
+                home.display()
+            ),
+        )?;
+        let paths = HostPaths::new(home.clone(), dir.path().join("cfg"));
+        let dest = dir.path().join("cfg").join("home").join(".claude.json");
+        fs::create_dir_all(dest.parent().unwrap_or(dir.path()))?;
+        fs::write(&dest, "{}")?;
+        let rw = PathRewriter::new(&home, "ni");
+
+        let granted = sync_mcp_servers(&paths, &dest, &rw, &[])?;
+        assert!(granted.is_empty());
+        assert!(read_json_object(&dest).get("mcpServers").is_none());
+
+        let granted = sync_mcp_servers(&paths, &dest, &rw, &["x".into(), "nope".into()])?;
+        assert_eq!(granted, vec!["x".to_string()]);
+        let got = read_json_object(&dest);
         assert_eq!(got["mcpServers"]["x"]["command"], "/home/ni/bin/x");
+        assert!(got["mcpServers"].get("y").is_none());
+
+        // A server that is no longer granted disappears again.
+        let granted = sync_mcp_servers(&paths, &dest, &rw, &["y".into()])?;
+        assert_eq!(granted, vec!["y".to_string()]);
+        assert!(read_json_object(&dest)["mcpServers"].get("x").is_none());
         Ok(())
     }
 

@@ -111,6 +111,8 @@ pub struct RunRequest {
     pub session_id: String,
     /// Enabled toolchains in build order, as resolved by `toolchain::resolve`.
     pub toolchains: Vec<&'static Toolchain>,
+    /// MCP servers found in the host configuration and granted for this run.
+    pub mcp: Vec<String>,
 }
 
 /// Assembly output.
@@ -242,6 +244,7 @@ fn session_info(
         session_id: req.session_id.clone(),
         image: req.image_tag.clone(),
         toolchains: toolchain::names(&req.toolchains),
+        mcp: req.mcp.clone(),
         git_mode: cfg.git_mode,
         yolo: req.yolo,
         user: cfg.user.clone(),
@@ -446,9 +449,16 @@ fn add_cache_mounts(
 }
 
 /// Ensure host-side directories exist before docker creates them as root.
-pub fn prepare_host_dirs(paths: &HostPaths, cfg: &Config, spec: &RunSpec) -> Result<()> {
+pub fn prepare_host_dirs(paths: &HostPaths, cfg: &Config, spec: &RunSpec) -> Result<Vec<String>> {
     fs::create_dir_all(paths.container_home())?;
-    ensure_onboarded(&paths.container_home().join(".claude.json"))?;
+    let claude_json = paths.container_home().join(".claude.json");
+    ensure_onboarded(&claude_json)?;
+    let granted = crate::init::sync_mcp_servers(
+        paths,
+        &claude_json,
+        &PathRewriter::new(&paths.home, &cfg.user),
+        &cfg.mcp,
+    )?;
     fs::create_dir_all(paths.net_log_dir())?;
     if !paths.config_dir.join("empty").exists() {
         fs::write(paths.config_dir.join("empty"), "")?;
@@ -462,7 +472,7 @@ pub fn prepare_host_dirs(paths: &HostPaths, cfg: &Config, spec: &RunSpec) -> Res
                 .with_context(|| format!("creating mount source {}", m.host.display()))?;
         }
     }
-    Ok(())
+    Ok(granted)
 }
 
 /// Make sure the container `.claude.json` says onboarding is done, otherwise
@@ -506,16 +516,20 @@ pub fn execute(
         policy,
     };
     let image_tag = builder.ensure(cfg.image.as_deref(), &project_dir(&facts.cwd))?;
-    let req = RunRequest {
+    let mut req = RunRequest {
         yolo,
         i_know,
         claude_args,
         image_tag,
         session_id: new_session_id(),
         toolchains: chain,
+        mcp: Vec::new(),
     };
+    // Assemble once for the mount list, grant the MCP servers, then assemble
+    // again so the session info reports what was actually granted.
+    let probe = assemble(cfg, paths, &facts, &git, &req)?;
+    req.mcp = prepare_host_dirs(paths, cfg, &probe.spec)?;
     let assembled = assemble(cfg, paths, &facts, &git, &req)?;
-    prepare_host_dirs(paths, cfg, &assembled.spec)?;
     for w in &assembled.warnings {
         eprintln!("claude_here: note: {w}");
     }
@@ -524,8 +538,13 @@ pub fn execute(
     } else {
         String::new()
     };
+    let mcp = if req.mcp.is_empty() {
+        String::new()
+    } else {
+        format!(" | mcp {}", req.mcp.join(","))
+    };
     eprintln!(
-        "claude_here: session {} | image {} | git {}{} | net {}{}",
+        "claude_here: session {} | image {} | git {}{}{mcp} | net {}{}",
         req.session_id,
         assembled.info.image,
         cfg.git_mode,
@@ -628,6 +647,7 @@ mod tests {
             image_tag: "claude_here:base".into(),
             session_id: "20260919-120000-abcd".into(),
             toolchains: vec![],
+            mcp: vec![],
         }
     }
 

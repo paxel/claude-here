@@ -111,6 +111,7 @@ fn dry_run(
             .unwrap_or_else(|| image::chain_tag(facts.uid, &toolchain::names(&chain))),
         session_id: session::new_session_id(),
         toolchains: chain,
+        mcp: cfg.mcp.clone(),
     };
     let a = run::assemble(cfg, paths, &facts, &git, &req)?;
     for w in &a.warnings {

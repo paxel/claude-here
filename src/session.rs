@@ -139,6 +139,8 @@ pub struct SessionInfo {
     pub image: String,
     /// Enabled toolchains in build order.
     pub toolchains: Vec<String>,
+    /// MCP servers granted for this session. Nothing is inherited from the host.
+    pub mcp: Vec<String>,
     pub git_mode: GitMode,
     pub yolo: bool,
     pub user: String,
@@ -180,6 +182,11 @@ impl SessionInfo {
                 "Git mode is 'commit': you may inspect, stage and commit locally. Checkout, switch, branch creation, reset, rebase, merge, stash, tag and any remote operation are denied by the git wrapper; do not attempt them or bypass the wrapper. ",
             ),
             GitMode::Full => s.push_str("Git mode is 'full': git is unrestricted. "),
+        }
+        if !self.mcp.is_empty() {
+            s.push_str("MCP server(s) granted for this session: ");
+            s.push_str(&self.mcp.join(", "));
+            s.push_str(". ");
         }
         if self.net_capture {
             s.push_str("All network traffic of this session is recorded for later review. ");
@@ -236,6 +243,7 @@ mod tests {
             session_id: "s".into(),
             image: "claude_here:base".into(),
             toolchains: vec!["rust".into()],
+            mcp: vec![],
             git_mode: GitMode::Ro,
             yolo: false,
             user: "ni".into(),

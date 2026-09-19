@@ -12,6 +12,7 @@ Initial release.
 * Language servers ship with their toolchain (rust-analyzer, jdtls, pyright, gopls, clangd, typescript-language-server, dart), so Claude Code's LSP tool works in the sandbox.
 * `graphviz` added to the base image (changes the base hash; rebuild on first run).
 * Global and per-project user Dockerfile layers, hash-based rebuilds, `update`.
+* MCP servers are opt-in per project (`mcp = [...]` / `--mcp NAME`); `mcpServers` is no longer seeded from the host `.claude.json`.
 * Per-session network capture inside the container with `tshark` summaries; `net last|show|top|grep|shark|list|prune`.
 * TOML configuration (global < project < CLI), `config show|set|path`, `--save`.
 * `init`, `build`, `completions` (fish/bash/zsh, installed for fish by `init`), `uninstall`.

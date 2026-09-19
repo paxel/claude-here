@@ -289,6 +289,28 @@ a new Claude Code release; pin one with `claude_version = "1.2.3"`.
 and the container is Debian even on a Mac. Claude can edit `ios/` sources and
 run the Dart side; building and signing stay on a Mac or in CI.
 
+### MCP servers
+
+Every restriction in this tool is enforced against a process: the `git` shim,
+the cloud shims, the egress proxy. An MCP server sidesteps all of them, because
+the capability arrives over a socket. A GitHub MCP server with a token can push
+while git mode is `ro`; a Kubernetes MCP server ignores the `kubectl` shim.
+
+Nothing is therefore inherited. `mcpServers` is not copied from the host
+configuration; a server is available only when it is named:
+
+```toml
+mcp = ["github", "sentry"]
+```
+
+```sh
+claude_here --mcp github
+```
+
+The servers granted for a run are printed in the startup line and listed in
+`CLAUDE_HERE_SESSION_INFO`. An MCP server can grant reach that no shim here can
+restrict — that is why it takes an explicit grant.
+
 ### Network recording
 
 Every session (unless `--no-net-log` / `net_capture = false` / host
@@ -333,7 +355,7 @@ Every session also prints one line at exit
 
 ```json
 {"tool":"claude_here","version":"0.1.0","session_id":"20260919-095014-8865",
- "image":"claude_here:base-u1000","toolchains":[],"git_mode":"ro","yolo":false,"user":"ni",
+ "image":"claude_here:base-u1000","toolchains":[],"mcp":[],"git_mode":"ro","yolo":false,"user":"ni",
  "cwd_host":"/home/axel/src/foo","cwd":"/home/ni/src/foo",
  "mounts":[{"host":"/home/axel/src/foo","container":"/home/ni/src/foo","mode":"rw"},
            {"host":"/home/axel/src/foo/.git","container":"/home/ni/src/foo/.git","mode":"ro"}],
