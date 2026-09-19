@@ -12,6 +12,7 @@ pub mod plugin;
 pub mod run;
 pub mod session;
 pub mod toolchain;
+pub mod update;
 
 use std::io::Write;
 use std::process::ExitCode;
@@ -69,6 +70,14 @@ fn dispatch(yolo_binary: bool) -> Result<i32> {
         save_layer(&layers, &cli_layer, flags.save_global)?;
     }
     let cfg = layers.resolve(cli_layer);
+    // Decided from the cache, so nothing is fetched before a session starts.
+    // A successful update replaces this binary, so re-exec with the same
+    // arguments instead of running the session with the old one.
+    if !flags.dry_run
+        && update::prompt_and_update(&paths, update::on_a_terminal(), cfg.update_check)
+    {
+        update::reexec();
+    }
     let policy = BuildPolicy {
         force: flags.rebuild,
         no_build: flags.no_build,
@@ -176,6 +185,16 @@ fn run_subcommand(paths: &HostPaths, command: Command) -> Result<()> {
                 before.as_deref().unwrap_or("(none)"),
                 after.as_deref().unwrap_or("(unknown)")
             );
+            // `update` is when someone is thinking about versions anyway.
+            update::refresh_if_stale(paths, cfg.update_check);
+            if let Some(latest) = update::pending(paths) {
+                let exe = std::env::current_exe().unwrap_or_default();
+                println!(
+                    "claude_here: {} -> {latest} available  ({})",
+                    update::current(),
+                    update::install_method(&exe).hint()
+                );
+            }
             Ok(())
         }
         Command::Config(args) => config_command(paths, args.action),

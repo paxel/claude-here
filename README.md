@@ -471,6 +471,35 @@ Startup prints the effective setup:
 claude_here: session 20260919-095014-8865 | image claude_here:base-u1000 | git ro (1 .git dir(s) read-only) | cloud none | net recorded
 ```
 
+## Updating
+
+Two different things can be out of date, and they update separately:
+
+```sh
+claude_here update      # Claude Code inside the image: rebuilds the base
+```
+
+For the tool itself, claude_here checks GitHub for a newer release **at most
+once a day, after a session has ended** — never while one starts, so nothing is
+fetched before your work and nothing is added to the startup time. The answer is
+cached in `~/.config/claude_here/update-check.json`.
+
+When the cached answer says a newer release exists, the next interactive start
+asks:
+
+```
+claude_here: update available: 0.1.0 -> 0.2.0. Update now? [y/N]
+```
+
+Answering yes runs the command that matches how the binary was installed — the
+path decides: `cargo install --force` under `~/.cargo/bin`, `brew upgrade` under
+a Homebrew prefix, otherwise the release `install.sh` — and then restarts with
+your original arguments. Answering no prints that command and continues.
+
+There is no prompt without a terminal, so `-p`, pipes and CI only see a single
+notice line and never stall. Switch it off with `update_check = false` or
+`CLAUDE_HERE_NO_UPDATE_CHECK=1`.
+
 ## Uninstall
 
 ```

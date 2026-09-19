@@ -20,5 +20,6 @@ Initial release.
 * MCP servers are opt-in per project (`mcp = [...]` / `--mcp NAME`); `mcpServers` is no longer seeded from the host `.claude.json`.
 * Per-session network capture inside the container with `tshark` summaries; `net last|show|top|grep|shark|list|prune`.
 * TOML configuration (global < project < CLI), `config show|set|path`, `--save`.
+* Update check for the tool itself: the GitHub release API is consulted at most once a day *after* a session, the answer is cached, and the next interactive start offers to install it with the command matching the install method, then restarts with the original arguments. Off with `update_check = false` or `CLAUDE_HERE_NO_UPDATE_CHECK=1`; never prompts without a terminal.
 * `init`, `build`, `completions` (fish/bash/zsh, installed for fish by `init`), `uninstall`.
 * Release workflow producing Linux (musl) and macOS tarballs, `install.sh`, Homebrew formula template.

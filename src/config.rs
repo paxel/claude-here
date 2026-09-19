@@ -231,6 +231,9 @@ pub struct ConfigFile {
     pub gh: Option<bool>,
     pub net_capture: Option<bool>,
     pub net_retention_days: Option<u32>,
+    /// Check once a day whether a newer claude_here release exists, and offer
+    /// to install it. `CLAUDE_HERE_NO_UPDATE_CHECK` overrides this.
+    pub update_check: Option<bool>,
     pub claude_version: Option<String>,
     pub memory: Option<String>,
     pub cpus: Option<f64>,
@@ -296,6 +299,7 @@ impl ConfigFile {
             gh,
             net_capture,
             net_retention_days,
+            update_check,
             claude_version,
             memory,
             cpus,
@@ -345,6 +349,7 @@ pub struct Config {
     pub gh: bool,
     pub net_capture: bool,
     pub net_retention_days: u32,
+    pub update_check: bool,
     pub claude_version: String,
     pub memory: Option<String>,
     pub cpus: Option<f64>,
@@ -409,6 +414,7 @@ impl From<ConfigFile> for Config {
             gh: f.gh.unwrap_or(false),
             net_capture: f.net_capture.unwrap_or(true),
             net_retention_days: f.net_retention_days.unwrap_or(DEFAULT_NET_RETENTION_DAYS),
+            update_check: f.update_check.unwrap_or(true),
             claude_version: f.claude_version.unwrap_or_else(|| "latest".to_string()),
             memory: f.memory,
             cpus: f.cpus,
@@ -528,6 +534,7 @@ mod tests {
         assert_eq!(c.cloud_mode, CloudMode::None);
         assert_eq!(c.net_mode, NetMode::Full);
         assert!(c.net_capture);
+        assert!(c.update_check);
         assert_eq!(c.net_retention_days, 90);
         assert!(!c.ssh && !c.gh);
         assert!(c.mcp.is_empty());

@@ -757,6 +757,8 @@ pub fn execute(
     let _ = fs::remove_file(&gh_file);
     let _ = fs::remove_dir_all(paths.net_view_dir(&req.session_id));
     let code = code?;
+    // After the session: the wait is never in front of the work.
+    crate::update::refresh_if_stale(paths, cfg.update_check);
     if assembled.info.net_capture {
         crate::net::collect_session_output(paths, &req.session_id)?;
         crate::net::print_exit_summary(paths, &req.session_id, &assembled.info);
