@@ -231,9 +231,10 @@ pub struct ConfigFile {
     pub gh: Option<bool>,
     pub net_capture: Option<bool>,
     pub net_retention_days: Option<u32>,
-    /// Check once a day whether a newer claude_here release exists, and offer
-    /// to install it. `CLAUDE_HERE_NO_UPDATE_CHECK` overrides this.
+    /// Check once a day whether a newer claude_here or Claude Code release
+    /// exists, and offer it. `CLAUDE_HERE_NO_UPDATE_CHECK` overrides this.
     pub update_check: Option<bool>,
+    /// `latest` or `stable` follows that channel; anything else is a pin.
     pub claude_version: Option<String>,
     pub memory: Option<String>,
     pub cpus: Option<f64>,

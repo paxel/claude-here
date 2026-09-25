@@ -1,5 +1,6 @@
 //! claude_here: run Claude Code inside a project-scoped Docker sandbox.
 
+pub mod claude_update;
 pub mod cli;
 pub mod config;
 pub mod docker;
@@ -78,6 +79,11 @@ fn dispatch(yolo_binary: bool) -> Result<i32> {
     {
         update::reexec();
     }
+    // Asked after the tool's own update, which re-execs. A custom image has no
+    // Claude layer, and --no-build could not act on a "y".
+    if !flags.dry_run && !flags.no_build && cfg.image.is_none() {
+        claude_update::prompt(&paths, &cfg, update::on_a_terminal());
+    }
     let policy = BuildPolicy {
         force: flags.rebuild,
         no_build: flags.no_build,
@@ -95,7 +101,10 @@ fn save_layer(layers: &Layers, cli_layer: &ConfigFile, global: bool) -> Result<(
     } else {
         (&layers.project_path, layers.project.clone())
     };
-    let merged = existing.merged_with(cli_layer.clone());
+    let mut merged = existing.merged_with(cli_layer.clone());
+    // Saving `--rust` twice must not list it twice.
+    let mut seen = std::collections::HashSet::new();
+    merged.toolchains.retain(|t| seen.insert(t.clone()));
     merged.save(path)?;
     eprintln!("claude_here: saved to {}", path.display());
     Ok(())
@@ -115,10 +124,7 @@ fn dry_run(
         yolo,
         i_know,
         claude_args,
-        image_tag: cfg
-            .image
-            .clone()
-            .unwrap_or_else(|| image::chain_tag(facts.uid, &toolchain::names(&chain))),
+        image_tag: run::planned_tag(cfg, paths, &facts)?,
         session_id: session::new_session_id(),
         toolchains: chain,
         mcp: cfg.mcp.clone(),
@@ -167,23 +173,34 @@ fn run_subcommand(paths: &HostPaths, command: Command) -> Result<()> {
             println!("{tag}");
             Ok(())
         }
-        Command::Update => {
-            let before = run::installed_claude_version();
-            let cfg = load_config(paths, ConfigFile::default())?;
-            run::build_only(
+        Command::Update { tc, base } => {
+            let cfg = load_config(
+                paths,
+                ConfigFile {
+                    toolchains: tc.names(),
+                    ..Default::default()
+                },
+            )?;
+            let version = claude_update::update_now(paths, &cfg)?;
+            if claude_update::channel(&cfg.claude_version).is_some() {
+                println!("claude: {version} accepted");
+            } else {
+                println!("claude: pinned to {version} (claude_version)");
+            }
+            let built = run::build_reporting(
                 &cfg,
                 paths,
                 BuildPolicy {
-                    force: true,
+                    force: false,
                     no_build: false,
-                    refresh_base: true,
+                    refresh_base: base,
                 },
             )?;
-            let after = run::installed_claude_version();
             println!(
-                "claude: {} -> {}",
-                before.as_deref().unwrap_or("(none)"),
-                after.as_deref().unwrap_or("(unknown)")
+                "claude: {} -> {}  ({})",
+                built.claude_before.as_deref().unwrap_or("(none)"),
+                built.claude_after.as_deref().unwrap_or("(unknown)"),
+                built.tag
             );
             // `update` is when someone is thinking about versions anyway.
             update::refresh_if_stale(paths, cfg.update_check);
@@ -390,4 +407,27 @@ fn uninstall(paths: &HostPaths, purge: bool, yes: bool) -> Result<()> {
     );
     println!("binary: remove with `cargo uninstall claude-here` or delete it from your PATH");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saving_does_not_repeat_toolchains() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let project = dir.path().join("config.toml");
+        std::fs::write(&project, "toolchains = [\"dart\", \"rust\", \"rust\"]\n")?;
+        let layers = Layers::load(dir.path().join("global.toml"), project.clone())?;
+        let cli = ConfigFile {
+            toolchains: vec!["dart".into(), "node".into()],
+            ..Default::default()
+        };
+        save_layer(&layers, &cli, false)?;
+        assert_eq!(
+            ConfigFile::load(&project)?.toolchains,
+            vec!["dart".to_string(), "rust".into(), "node".into()]
+        );
+        Ok(())
+    }
 }

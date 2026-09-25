@@ -692,7 +692,7 @@ pub fn execute(
             user: cfg.user.clone(),
             uid: facts.uid,
             gid: facts.gid,
-            claude_version: cfg.claude_version.clone(),
+            claude_version: claude_version(cfg, paths),
         },
         toolchains: chain.clone(),
         policy,
@@ -759,6 +759,7 @@ pub fn execute(
     let code = code?;
     // After the session: the wait is never in front of the work.
     crate::update::refresh_if_stale(paths, cfg.update_check);
+    crate::claude_update::refresh_if_stale(paths, cfg);
     if assembled.info.net_capture {
         crate::net::collect_session_output(paths, &req.session_id)?;
         crate::net::print_exit_summary(paths, &req.session_id, &assembled.info);
@@ -769,6 +770,21 @@ pub fn execute(
 
 /// Build (or refresh) the image chain without running.
 pub fn build_only(cfg: &Config, paths: &HostPaths, policy: BuildPolicy) -> Result<String> {
+    Ok(build_reporting(cfg, paths, policy)?.tag)
+}
+
+/// What `build_reporting` did.
+pub struct Built {
+    pub tag: String,
+    /// Claude Code version of the image before and after the build.
+    pub claude_before: Option<String>,
+    pub claude_after: Option<String>,
+}
+
+/// `build_only`, also reading the Claude Code version the final image had
+/// before and has after, from its label: `update` reports what is actually in
+/// the image, not what was asked for.
+pub fn build_reporting(cfg: &Config, paths: &HostPaths, policy: BuildPolicy) -> Result<Built> {
     let docker = Docker::default();
     docker.check()?;
     let facts = HostFacts::gather(paths, cfg)?;
@@ -779,27 +795,49 @@ pub fn build_only(cfg: &Config, paths: &HostPaths, policy: BuildPolicy) -> Resul
             user: cfg.user.clone(),
             uid: facts.uid,
             gid: facts.gid,
-            claude_version: cfg.claude_version.clone(),
+            claude_version: claude_version(cfg, paths),
         },
         toolchains: toolchain::resolve(&cfg.toolchains)?,
         policy,
     };
-    builder.ensure(cfg.image.as_deref(), &project_dir(&facts.cwd))
+    let dir = project_dir(&facts.cwd);
+    let before = builder.final_tag(cfg.image.as_deref(), &dir)?;
+    let claude_before = docker.image_label(&before, image::CLAUDE_LABEL);
+    let tag = builder.ensure(cfg.image.as_deref(), &dir)?;
+    let claude_after = docker.image_label(&tag, image::CLAUDE_LABEL);
+    Ok(Built {
+        tag,
+        claude_before,
+        claude_after,
+    })
 }
 
-/// Claude Code version baked into the base image, if built.
-pub fn installed_claude_version() -> Option<String> {
+/// The tag a run would use, without building or touching docker or the
+/// network (`--dry-run`).
+pub fn planned_tag(cfg: &Config, paths: &HostPaths, facts: &HostFacts) -> Result<String> {
     let docker = Docker::default();
-    docker
-        .output(&[
-            "run",
-            "--rm",
-            "--entrypoint",
-            "claude",
-            &image::base_tag(&process_ids().unwrap_or((0, 0)).0),
-            "--version",
-        ])
-        .ok()
+    let builder = Builder {
+        docker: &docker,
+        paths,
+        identity: Identity {
+            user: cfg.user.clone(),
+            uid: facts.uid,
+            gid: facts.gid,
+            claude_version: cfg.claude_version.clone(),
+        },
+        toolchains: toolchain::resolve(&cfg.toolchains)?,
+        policy: BuildPolicy::default(),
+    };
+    builder.final_tag(cfg.image.as_deref(), &project_dir(&facts.cwd))
+}
+
+/// Claude Code version for the Claude layer. A custom image has none, so
+/// nothing is resolved (or fetched) for it.
+fn claude_version(cfg: &Config, paths: &HostPaths) -> String {
+    if cfg.image.is_some() {
+        return cfg.claude_version.clone();
+    }
+    crate::claude_update::version_for_build(paths, cfg)
 }
 
 #[cfg(test)]

@@ -1,11 +1,13 @@
 //! Image chain: `base` → one layer per enabled toolchain → global user layer →
-//! project layer. Every image carries a `claude_here.hash` label; a layer is
-//! rebuilt when its inputs (Dockerfile text, build args, parent hash) change.
+//! project layer → Claude Code. Every image carries a `claude_here.hash`
+//! label; a layer is rebuilt when its inputs (Dockerfile text, build args,
+//! parent image id) change. Hashing the parent's id rather than its inputs
+//! means a rebuilt parent (`update --base`) makes every child stale.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use sha2::{Digest, Sha256};
 
 use crate::docker::Docker;
@@ -18,6 +20,8 @@ pub const REPO: &str = "claude_here";
 pub const HASH_LABEL: &str = "claude_here.hash";
 /// Label holding the tool version that built the image.
 pub const VERSION_LABEL: &str = "claude_here.version";
+/// Label holding the Claude Code version of the Claude layer.
+pub const CLAUDE_LABEL: &str = "claude_here.claude_version";
 
 /// Tag of the base image for a host uid. Images embed uid/gid/user name, so
 /// every host user gets an own chain on a shared docker daemon.
@@ -37,7 +41,13 @@ pub fn chain_tag(uid: u32, names: &[String]) -> String {
     tag
 }
 
+/// Tag of the Claude layer on top of `parent`; the image a session runs.
+pub fn claude_tag(parent: &str) -> String {
+    format!("{parent}-claude")
+}
+
 const DOCKERFILE_BASE: &str = include_str!("../images/Dockerfile.base");
+const DOCKERFILE_CLAUDE: &str = include_str!("../images/claude.dockerfile");
 const ENTRYPOINT: &str = include_str!("../images/entrypoint.sh");
 const NET_SUMMARY: &str = include_str!("../images/net-summary.sh");
 const GIT_SHIM: &str = include_str!("../images/git-shim.sh");
@@ -71,6 +81,8 @@ pub struct Identity {
     pub user: String,
     pub uid: u32,
     pub gid: u32,
+    /// Claude Code version for the Claude layer: an exact version, or a
+    /// channel name when none could be resolved.
     pub claude_version: String,
 }
 
@@ -81,7 +93,7 @@ pub struct BuildPolicy {
     pub force: bool,
     /// Never build; fail when an image is missing or stale.
     pub no_build: bool,
-    /// Pass `--no-cache` and `--pull` to the base build (used by `update`).
+    /// Pass `--no-cache` and `--pull` to the base build (`update --base`).
     pub refresh_base: bool,
 }
 
@@ -146,30 +158,51 @@ impl Builder<'_> {
             }
             return Ok(image.to_string());
         }
-        let (mut tag, mut hash) = self.ensure_base()?;
+        let mut tag = self.ensure_base()?;
         let mut names: Vec<String> = Vec::new();
         for t in &self.toolchains {
             names.push(t.name.to_string());
             let layer_tag = chain_tag(self.identity.uid, &names);
-            (tag, hash) = self.ensure_toolchain(&layer_tag, t, &tag, &hash)?;
+            tag = self.ensure_toolchain(&layer_tag, t, &tag)?;
         }
-        let stem = chain_tag(self.identity.uid, &names);
-        let user_file = self.paths.user_dockerfile();
-        let user_snippet = read_snippet(&user_file)?;
+        for (next_tag, snippet) in self.snippet_layers(project_dir)? {
+            tag = self.ensure_layer(&next_tag, &tag, &snippet)?;
+        }
+        self.ensure_claude(&tag)
+    }
+
+    /// The tag `ensure` returns, without building anything.
+    pub fn final_tag(&self, custom_image: Option<&str>, project_dir: &Path) -> Result<String> {
+        if let Some(image) = custom_image {
+            return Ok(image.to_string());
+        }
+        let top = self.snippet_layers(project_dir)?.pop().map(|(t, _)| t);
+        Ok(claude_tag(&top.unwrap_or_else(|| self.stem())))
+    }
+
+    fn stem(&self) -> String {
+        let names: Vec<String> = self.toolchains.iter().map(|t| t.name.to_string()).collect();
+        chain_tag(self.identity.uid, &names)
+    }
+
+    /// `(tag, snippet)` of the global user layer and the project layer, in
+    /// build order, for those that have instructions.
+    fn snippet_layers(&self, project_dir: &Path) -> Result<Vec<(String, String)>> {
+        let stem = self.stem();
+        let mut layers = Vec::new();
+        let user_snippet = read_snippet(&self.paths.user_dockerfile())?;
         let has_user = user_snippet.as_deref().is_some_and(has_instructions);
         if let Some(snippet) = user_snippet.filter(|s| has_instructions(s)) {
-            let next_tag = format!("{stem}-user");
-            (tag, hash) = self.ensure_layer(&next_tag, &tag, &hash, &snippet)?;
+            layers.push((format!("{stem}-user"), snippet));
         }
         let project_file = project_dir.join("Dockerfile");
         if let Some(snippet) = read_snippet(&project_file)?.filter(|s| has_instructions(s)) {
-            let next_tag = project_tag(&stem, has_user, project_dir);
-            (tag, _) = self.ensure_layer(&next_tag, &tag, &hash, &snippet)?;
+            layers.push((project_tag(&stem, has_user, project_dir), snippet));
         }
-        Ok(tag)
+        Ok(layers)
     }
 
-    fn ensure_base(&self) -> Result<(String, String)> {
+    fn ensure_base(&self) -> Result<String> {
         let id = &self.identity;
         let tag = base_tag(&id.uid);
         let hash = hash_inputs(&[
@@ -182,10 +215,9 @@ impl Builder<'_> {
             &id.user,
             &id.uid.to_string(),
             &id.gid.to_string(),
-            &id.claude_version,
         ]);
         if self.is_current(&tag, &hash) && !self.policy.refresh_base {
-            return Ok((tag, hash));
+            return Ok(tag);
         }
         self.refuse_if_no_build(&tag)?;
         eprintln!("claude_here: building {tag}");
@@ -196,19 +228,11 @@ impl Builder<'_> {
         ctx.write("git-shim.sh", GIT_SHIM)?;
         ctx.write("cloud-shim.sh", CLOUD_SHIM)?;
         ctx.write("net-allowlist.sh", NET_ALLOWLIST)?;
-        let mut build_args = vec![
+        let build_args = vec![
             ("CH_USER".to_string(), id.user.clone()),
             ("CH_UID".to_string(), id.uid.to_string()),
             ("CH_GID".to_string(), id.gid.to_string()),
-            ("CLAUDE_VERSION".to_string(), id.claude_version.clone()),
         ];
-        if self.policy.refresh_base {
-            // Invalidates the Claude install step and nothing before it.
-            build_args.push((
-                "CLAUDE_REFRESH".to_string(),
-                crate::session::now_secs().to_string(),
-            ));
-        }
         self.docker.build(
             &ctx.dir,
             &tag,
@@ -216,19 +240,13 @@ impl Builder<'_> {
             &Self::labels(&hash),
             self.policy.refresh_base,
         )?;
-        Ok((tag, hash))
+        Ok(tag)
     }
 
-    fn ensure_toolchain(
-        &self,
-        tag: &str,
-        toolchain: &Toolchain,
-        parent: &str,
-        parent_hash: &str,
-    ) -> Result<(String, String)> {
-        let hash = hash_inputs(&[parent_hash, toolchain.dockerfile]);
+    fn ensure_toolchain(&self, tag: &str, toolchain: &Toolchain, parent: &str) -> Result<String> {
+        let hash = hash_inputs(&[&self.parent_id(parent)?, toolchain.dockerfile]);
         if self.is_current(tag, &hash) {
-            return Ok((tag.to_string(), hash));
+            return Ok(tag.to_string());
         }
         self.refuse_if_no_build(tag)?;
         eprintln!("claude_here: building {tag}");
@@ -240,20 +258,14 @@ impl Builder<'_> {
         ];
         self.docker
             .build(&ctx.dir, tag, &build_args, &Self::labels(&hash), false)?;
-        Ok((tag.to_string(), hash))
+        Ok(tag.to_string())
     }
 
-    fn ensure_layer(
-        &self,
-        tag: &str,
-        parent: &str,
-        parent_hash: &str,
-        snippet: &str,
-    ) -> Result<(String, String)> {
+    fn ensure_layer(&self, tag: &str, parent: &str, snippet: &str) -> Result<String> {
         let text = wrap_user_layer(parent, &self.identity.user, snippet);
-        let hash = hash_inputs(&[parent_hash, &text]);
+        let hash = hash_inputs(&[&self.parent_id(parent)?, &text]);
         if self.is_current(tag, &hash) {
-            return Ok((tag.to_string(), hash));
+            return Ok(tag.to_string());
         }
         self.refuse_if_no_build(tag)?;
         eprintln!("claude_here: building {tag}");
@@ -261,7 +273,55 @@ impl Builder<'_> {
         ctx.write("Dockerfile", &text)?;
         self.docker
             .build(&ctx.dir, tag, &[], &Self::labels(&hash), false)?;
-        Ok((tag.to_string(), hash))
+        Ok(tag.to_string())
+    }
+
+    /// The Claude layer on top of `parent`. Under `--no-build` an existing
+    /// layer with an older Claude is used with a note: the version moved, the
+    /// image below did not.
+    fn ensure_claude(&self, parent: &str) -> Result<String> {
+        let tag = claude_tag(parent);
+        let version = &self.identity.claude_version;
+        let hash = hash_inputs(&[
+            &self.parent_id(parent)?,
+            DOCKERFILE_CLAUDE,
+            &self.identity.user,
+            version,
+        ]);
+        if self.is_current(&tag, &hash) {
+            return Ok(tag);
+        }
+        if self.policy.no_build && self.docker.image_id(&tag).is_some() {
+            let have = self
+                .docker
+                .image_label(&tag, CLAUDE_LABEL)
+                .unwrap_or_else(|| "unknown".into());
+            eprintln!(
+                "claude_here: note: {tag} has Claude Code {have}, {version} is accepted; kept because of --no-build"
+            );
+            return Ok(tag);
+        }
+        self.refuse_if_no_build(&tag)?;
+        eprintln!("claude_here: building {tag} (Claude Code {version})");
+        let ctx = BuildContext::new("claude")?;
+        ctx.write("Dockerfile", DOCKERFILE_CLAUDE)?;
+        let build_args = vec![
+            ("BASE".to_string(), parent.to_string()),
+            ("CH_USER".to_string(), self.identity.user.clone()),
+            ("CLAUDE_VERSION".to_string(), version.clone()),
+        ];
+        let mut labels = Self::labels(&hash);
+        labels.push((CLAUDE_LABEL.to_string(), version.clone()));
+        self.docker
+            .build(&ctx.dir, &tag, &build_args, &labels, false)?;
+        Ok(tag)
+    }
+
+    /// Id of an image the chain just ensured; its absence is a bug upstream.
+    fn parent_id(&self, parent: &str) -> Result<String> {
+        self.docker
+            .image_id(parent)
+            .ok_or_else(|| anyhow!("image {parent} is missing"))
     }
 
     fn is_current(&self, tag: &str, hash: &str) -> bool {
@@ -388,6 +448,7 @@ mod tests {
     fn every_download_retries() {
         let mut files: Vec<(&str, &str)> = vec![
             ("Dockerfile.base", DOCKERFILE_BASE),
+            ("claude.dockerfile", DOCKERFILE_CLAUDE),
             ("net-allowlist.sh", NET_ALLOWLIST),
         ];
         for t in crate::toolchain::TOOLCHAINS {
@@ -413,7 +474,10 @@ mod tests {
     /// the very first line, or the build fails with a parse error.
     #[test]
     fn cache_mounts_come_with_the_syntax_directive() {
-        let mut files: Vec<(&str, &str)> = vec![("Dockerfile.base", DOCKERFILE_BASE)];
+        let mut files: Vec<(&str, &str)> = vec![
+            ("Dockerfile.base", DOCKERFILE_BASE),
+            ("claude.dockerfile", DOCKERFILE_CLAUDE),
+        ];
         for t in crate::toolchain::TOOLCHAINS {
             files.push((t.name, t.dockerfile));
         }
@@ -444,17 +508,37 @@ mod tests {
         }
     }
 
-    /// `update` must bust the Claude install step only, so apt and the
-    /// downloads survive.
+    /// Claude Code lives in its own last layer, so a new release rebuilds
+    /// that layer alone and never the base below it.
     #[test]
-    fn base_busts_only_the_claude_step_on_refresh() {
-        assert!(DOCKERFILE_BASE.contains("ARG CLAUDE_REFRESH"));
-        let (before, after) = DOCKERFILE_BASE
-            .split_once("ARG CLAUDE_REFRESH")
+    fn claude_is_installed_by_its_own_layer_only() {
+        assert!(!DOCKERFILE_BASE.contains("install.sh"));
+        assert!(!DOCKERFILE_BASE.contains("CLAUDE_VERSION"));
+        assert!(DOCKERFILE_CLAUDE.contains("claude.ai/install.sh"));
+        // ARGs before FROM are out of scope after it; these must follow it.
+        let (_, after_from) = DOCKERFILE_CLAUDE
+            .split_once("FROM ${BASE}")
             .unwrap_or_default();
-        assert!(before.contains("apt-get install"), "apt must come first");
-        assert!(after.contains("claude.ai/install.sh"));
-        assert!(after.contains("${CLAUDE_REFRESH}"), "the arg must be used");
+        assert!(after_from.contains("ARG CLAUDE_VERSION"));
+        assert!(after_from.contains("ARG CH_USER"));
+        assert!(after_from.contains("bash -s -- \"${CLAUDE_VERSION}\""));
+        // Installed as the sandbox user; the image ends as root for the entrypoint.
+        assert!(after_from.contains("USER ${CH_USER}"));
+        assert_eq!(
+            DOCKERFILE_CLAUDE
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty()),
+            Some("USER root")
+        );
+    }
+
+    #[test]
+    fn claude_tag_extends_its_parent() {
+        assert_eq!(
+            claude_tag("claude_here:base-u1000-rust"),
+            "claude_here:base-u1000-rust-claude"
+        );
     }
 
     #[test]
@@ -499,7 +583,11 @@ mod tests {
             .iter()
             .map(|t| t.name.to_string())
             .collect();
-        let tag = project_tag(&chain_tag(1000, &all), true, Path::new("/home/axel/p"));
+        let tag = claude_tag(&project_tag(
+            &chain_tag(1000, &all),
+            true,
+            Path::new("/home/axel/p"),
+        ));
         assert!(tag.len() <= 128, "tag too long: {} ({})", tag, tag.len());
     }
 

@@ -163,7 +163,9 @@ claude_here --docker-arg --add-host --docker-arg db:10.0.0.5   # raw docker flag
 # resources, images, debugging
 claude_here --memory 8g --cpus 4
 claude_here --rebuild                     # rebuild the whole chain now
-claude_here update                        # new Claude Code release: rebuild base without cache
+claude_here update                        # newest Claude Code now: rebuilds only the Claude layer
+claude_here update --node                 # the same for the image a --node run uses
+claude_here update --base                 # also refresh the OS packages of the base image
 claude_here build --toolchain jvm         # pre-build without starting a session
 claude_here --dry-run -p x                # print the docker run command and exit
 claude_here --image my-dev:latest         # bring your own image (must have claude in PATH)
@@ -321,8 +323,11 @@ Debian base. Tags carry the host uid (`claude_here:base-u1000-jvm-rust`) because
 the user, uid and gid are baked in.
 
 ```
-claude_here:base-u<uid>  →  ...-<toolchain>...  →  ...-user  →  ...-user-<sha8(project path)>
+claude_here:base-u<uid>  →  ...-<toolchain>...  →  ...-user  →  ...-user-<sha8(project path)>  →  ...-claude
 ```
+
+Claude Code is the last layer of every chain, so a new Claude release rebuilds
+that one small layer and nothing below it.
 
 Toolchains compose: every one is a layer, they are applied in a fixed order
 regardless of the order you type them, and each prefix of a chain is itself a
@@ -360,7 +365,7 @@ in `.claude_here/config.toml` once.
 | `gcloud` | Google Cloud CLI (~1GB) | — |
 | `azure` (`az`) | Azure CLI | — |
 
-The base image holds Debian trixie slim, Claude Code (native installer), git,
+The base image holds Debian trixie slim, git,
 gh, curl, ripgrep, fd, jq, graphviz, python3 + pip/venv, build-essential,
 pkg-config, libssl-dev, openssh-client, tcpdump, tshark and termshark.
 
@@ -376,9 +381,9 @@ On top of the chain:
 * `.claude_here/Dockerfile` — project layer on top of that.
 
 Layers are rebuilt automatically when their content changes (hash stored as an
-image label). `claude_here update` invalidates only the step that installs
-Claude Code, so apt and the toolchain downloads are not repeated; pin a version
-with `claude_version = "1.2.3"`. Package downloads (apt, pip, npm, Go modules)
+image label). A layer's hash includes the id of the image below it, so a
+rebuilt base or toolchain makes everything above it stale, in every chain: each
+one rebuilds on its next start. Package downloads (apt, pip, npm, Go modules)
 live in BuildKit cache mounts, so a rebuilt layer re-downloads nothing.
 
 **iOS cannot be built in the sandbox.** Xcode and the iOS SDKs are macOS-only
@@ -465,7 +470,7 @@ URL. Example:
 $ claude_here net last
 session  20260919-095014-8865  (2026-09-19 09:50 UTC)
 project  /home/axel/src/foo
-image    claude_here:base-u1000   git ro
+image    claude_here:base-u1000-claude   git ro
 traffic  516 packets, 624.2 KB up / 189.9 KB down, 5 dns queries
 ┌───────────────────┬───────────────────┬───────┬──────────┬──────────┐
 │ host              ┆ ip:port           ┆ conns ┆ up       ┆ down     │
@@ -483,8 +488,8 @@ Every session also prints one line at exit
 `CLAUDE_HERE_SESSION_INFO` is exported inside the container:
 
 ```json
-{"tool":"claude_here","version":"0.1.0","session_id":"20260919-095014-8865",
- "image":"claude_here:base-u1000","toolchains":[],"mcp":[],"git_mode":"ro","cloud_mode":"none","net_mode":"full","yolo":false,"user":"ni",
+{"tool":"claude_here","version":"0.2.0","session_id":"20260919-095014-8865",
+ "image":"claude_here:base-u1000-claude","toolchains":[],"mcp":[],"git_mode":"ro","cloud_mode":"none","net_mode":"full","yolo":false,"user":"ni",
  "cwd_host":"/home/axel/src/foo","cwd":"/home/ni/src/foo",
  "mounts":[{"host":"/home/axel/src/foo","container":"/home/ni/src/foo","mode":"rw"},
            {"host":"/home/axel/src/foo/.git","container":"/home/ni/src/foo/.git","mode":"ro"}],
@@ -524,16 +529,40 @@ memory, …) comes from its own probing; nothing is scripted. The text lives in
 Startup prints the effective setup:
 
 ```
-claude_here: session 20260919-095014-8865 | image claude_here:base-u1000 | git ro (1 .git dir(s) read-only) | cloud none | net recorded
+claude_here: session 20260919-095014-8865 | image claude_here:base-u1000-claude | git ro (1 .git dir(s) read-only) | cloud none | net recorded
 ```
 
 ## Updating
 
-Two different things can be out of date, and they update separately:
+Three things can be out of date, and they update separately:
 
 ```sh
-claude_here update      # Claude Code inside the image: rebuilds the base
+claude_here update          # Claude Code: fetch the newest release, rebuild the Claude layer
+claude_here update --node   # same, for the image a `--node` run uses
+claude_here update --base   # also the OS packages of the base (--no-cache --pull)
 ```
+
+**Claude Code** is checked the same way as the tool below: once a day, after a
+session, cached in `~/.config/claude_here/claude-version.json`. The version comes
+from where Claude's own `install.sh` reads it
+(`https://downloads.claude.ai/claude-code-releases/latest`). When a newer
+release is known, the next interactive start asks:
+
+```
+claude_here: Claude Code 2.1.274 -> 2.1.282 available. Update now? [y/N]
+```
+
+"y" records the version as accepted: this session's image rebuilds its Claude
+layer (seconds), and every other image does the same on its next start without
+asking again. "n" keeps the accepted version and asks again next time. A new
+image is built with the accepted version. `claude_version = "stable"` follows
+the stable channel instead; `claude_version = "2.1.274"` pins that version and
+switches the check off. `update` fetches right away and accepts without a
+question, even with `update_check = false`, because you asked for it.
+
+After `update --base`, every other image rebuilds on its next start, since the
+base below it changed. `--rebuild` has the same effect on other images that
+share layers with the one it rebuilds.
 
 For the tool itself, claude_here checks GitHub for a newer release **at most
 once a day, after a session has ended** — never while one starts, so nothing is
@@ -553,8 +582,9 @@ a Homebrew prefix, otherwise the release `install.sh` — and then restarts with
 your original arguments. Answering no prints that command and continues.
 
 There is no prompt without a terminal, so `-p`, pipes and CI only see a single
-notice line and never stall. Switch it off with `update_check = false` or
-`CLAUDE_HERE_NO_UPDATE_CHECK=1`.
+notice line and never stall. `update_check = false` or
+`CLAUDE_HERE_NO_UPDATE_CHECK=1` switches off both checks, the tool's and
+Claude Code's.
 
 ## Uninstall
 

@@ -74,3 +74,55 @@ Consequences:
   `base→go` image, while `--jvm` alone is a different chain and builds again.
 * `graphviz` moves into the base image: `dot` is a shared dependency of the
   `docs` toolchain and of several unrelated tools, and it is ~10MB.
+
+## Amendment 2026-09-25: Claude Code is the last layer, parents hashed by id
+
+Claude Code sat in `base`, the bottom of every chain. A new Claude release,
+which arrives several times a week, therefore rebuilt the whole chain, and
+`update` refreshed only the chain of the current config: the base was rebuilt
+under the same hash label, so every other chain (`--node` runs, other
+projects) still counted as current and kept running the old Claude.
+
+Decision:
+
+```
+claude_here:base-u<uid>  →  ...-<toolchain>...  →  ...-user  →  ...-user-<sha8(project path)>  →  ...-claude
+```
+
+* Claude Code is installed by its own layer (`images/claude.dockerfile`) on
+  top of everything else, including the user and project layers. A new release
+  rebuilds that layer alone. User and project Dockerfiles can no longer call
+  `claude` during the build.
+* The layer's build arg and hash carry an exact version resolved on the host
+  from `downloads.claude.ai/claude-code-releases/<channel>`, the source
+  `install.sh` uses. The version is cached daily and refreshed after a session,
+  like the tool's own update check. A newer version is offered with a y/N
+  prompt at start; a "y" records it as accepted, and every chain rebuilds its
+  Claude layer on its next start without asking again. New chains get the
+  accepted version.
+* `claude_version = "latest"|"stable"` follows a channel; any other value is a
+  pin and switches detection off. `update_check = false` switches off both the
+  tool's and Claude's check.
+* A layer's hash includes the image id of its parent instead of the parent's
+  hash. A parent rebuilt under an unchanged hash (`update --base`, `--rebuild`)
+  now makes every child stale in every chain, and each rebuilds lazily.
+* `update` fetches the version now, accepts it and rebuilds the Claude layer of
+  the current chain; it takes the toolchain flags of a run. `update --base`
+  additionally rebuilds the base with `--no-cache --pull`.
+
+This supersedes, above: "`base` embeds … the Claude Code version", "`update`
+rebuilds the base with `--no-cache --pull`" and the consequence "Changing …
+the Claude version rebuilds the whole chain".
+
+Consequences:
+
+* A Claude update costs seconds per chain instead of minutes.
+* The final tag gains a `-claude` suffix; the previous final tag stays in use
+  as the layer below it. Content replaced by the one-time rebuild is dangling
+  and reclaimed by `docker image prune`.
+* BuildKit stamps a new creation time on every build, so any rebuild of a
+  lower layer (`--rebuild`, `update --base`) gives it a new id and every chain
+  above it rebuilds on its next start, not only the one that asked.
+* Under `--no-build`, a chain whose parent was rebuilt fails instead of silently
+  running on the old one; a chain whose only change is a newer accepted Claude
+  keeps its layer with a note.

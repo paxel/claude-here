@@ -224,6 +224,20 @@ impl Docker {
         (!s.is_empty()).then_some(s)
     }
 
+    /// Content-addressed id of a local image; `None` when it is missing. A
+    /// rebuild that hits the cache for every step keeps the id.
+    pub fn image_id(&self, image: &str) -> Option<String> {
+        let out = Command::new(&self.binary)
+            .args(["image", "inspect", "--format", "{{.Id}}", image])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (!s.is_empty()).then_some(s)
+    }
+
     /// `docker build` with inherited output.
     pub fn build(
         &self,
@@ -235,9 +249,9 @@ impl Docker {
     ) -> Result<()> {
         let mut args: Vec<String> = vec!["build".into(), "-t".into(), tag.into()];
         if refresh {
-            // No `--no-cache`: the Dockerfile busts only the step that installs
-            // Claude Code (CLAUDE_REFRESH), so apt and the downloads survive.
-            args.push("--pull".into());
+            // An OS refresh (`update --base`). The BuildKit cache mounts keep
+            // the downloaded apt archives, so this re-installs, not re-downloads.
+            args.extend(["--no-cache".into(), "--pull".into()]);
         }
         for (k, v) in build_args {
             args.extend(["--build-arg".into(), format!("{k}={v}")]);

@@ -130,7 +130,8 @@ fn dry_run_prints_docker_command() {
     assert!(out.starts_with("docker run --rm --init"));
     assert!(out.contains(".git:ro"));
     assert!(out.contains("claude_here:base-u"));
-    assert!(out.contains("-rust "));
+    // The image a run uses ends with the Claude layer.
+    assert!(out.contains("-rust-claude "));
     assert!(out.contains(" claude --append-system-prompt"));
     assert!(out.trim_end().ends_with("-p x"));
 }

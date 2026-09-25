@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
-# claude_here base image: Debian slim + Claude Code (native installer) +
-# common tooling + tcpdump/tshark for per-session network capture.
+# claude_here base image: Debian slim + common tooling + tcpdump/tshark for
+# per-session network capture. Claude Code is added by claude.dockerfile.
 #
 # The apt lists and archives live in BuildKit cache mounts, so a rebuild of this
 # layer re-downloads nothing. That needs BuildKit, which the tool forces with
@@ -10,7 +10,6 @@ FROM debian:trixie-slim
 ARG CH_USER=ni
 ARG CH_UID=1000
 ARG CH_GID=1000
-ARG CLAUDE_VERSION=latest
 ARG TERMSHARK_VERSION=2.4.0
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -59,16 +58,8 @@ RUN (getent group "${CH_GID}" >/dev/null || groupadd -g "${CH_GID}" "${CH_USER}"
  && mkdir -p "/home/${CH_USER}/.claude" "/home/${CH_USER}/.local/bin" \
  && chown -R "${CH_UID}:${CH_GID}" "/home/${CH_USER}"
 
-# Claude Code native binary, installed into the sandbox user's home.
-# CLAUDE_REFRESH busts the cache for this step alone: `claude_here update` wants
-# a new Claude release, not a new apt run.
-ARG CLAUDE_REFRESH=stable
-USER ${CH_USER}
-RUN echo "claude refresh: ${CLAUDE_REFRESH}" \
- && curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 https://claude.ai/install.sh | bash -s -- "${CLAUDE_VERSION}" \
- && "/home/${CH_USER}/.local/bin/claude" --version
-USER root
-
+# Claude Code itself is not part of the base: it is the last layer of every
+# chain (claude.dockerfile), so a new release does not rebuild anything below.
 ENV PATH="/usr/local/lib/claude_here/shims:/home/${CH_USER}/.local/bin:${PATH}"
 
 COPY entrypoint.sh net-summary.sh cloud-shim.sh net-allowlist.sh /usr/local/lib/claude_here/

@@ -28,9 +28,10 @@ pub const CONFIG_TEMPLATE: &str = "\
 # gh = false                    # mount gh config read-only (git mode full only)
 # net_capture = true
 # net_retention_days = 90
-# update_check = true           # once a day, offer to install a newer claude_here
+# update_check = true           # once a day, offer a newer claude_here and Claude Code
 #                               # (CLAUDE_HERE_NO_UPDATE_CHECK=1 turns it off too)
-# claude_version = \"latest\"   # pinned Claude Code version for the base image
+# claude_version = \"latest\"   # \"latest\" or \"stable\" follows that channel (checked daily,
+#                               # offered at start); \"2.1.274\" pins and stops the check
 # memory = \"8g\"
 # cpus = 4
 # env = [\"EDITOR=nano\", \"MY_HOST_VAR\"]

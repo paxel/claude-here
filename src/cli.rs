@@ -17,21 +17,9 @@ pub const SUBCOMMANDS: &[&str] = &[
     "uninstall",
 ];
 
-/// Flags accepted in front of the forwarded Claude arguments.
-#[derive(Debug, Parser, Default, Clone, PartialEq)]
-#[command(
-    name = "claude_here",
-    version,
-    about = "Run Claude Code in a project-scoped Docker sandbox",
-    long_about = "Run Claude Code in a project-scoped Docker sandbox.\n\n\
-Every argument that is not a claude_here flag is forwarded to `claude` inside the container.\n\
-Use `--` to force forwarding. Subcommands: init, build, update, config, net, toolchains, completions, uninstall.",
-    disable_help_subcommand = true
-)]
-pub struct RunFlags {
-    /// Custom local image to run instead of building the toolchain chain.
-    #[arg(long, value_name = "NAME")]
-    pub image: Option<String>,
+/// Toolchain switches, shared by a run and `update`.
+#[derive(Debug, Args, Default, Clone, PartialEq)]
+pub struct ToolchainFlags {
     /// Enable a toolchain by name. Repeatable; same as the per-toolchain flags.
     #[arg(long = "toolchain", short = 't', value_name = "NAME")]
     pub toolchain: Vec<String>,
@@ -85,6 +73,54 @@ pub struct RunFlags {
     /// Azure CLI (alias: --az).
     #[arg(long, visible_alias = "az", help_heading = "Toolchains")]
     pub azure: bool,
+}
+
+impl ToolchainFlags {
+    /// Toolchain names enabled by the per-toolchain flags and `--toolchain`.
+    pub fn names(&self) -> Vec<String> {
+        let mut v = self.toolchain.clone();
+        for (on, name) in [
+            (self.node, "node"),
+            (self.uv, "uv"),
+            (self.python, "python"),
+            (self.jvm, "jvm"),
+            (self.android, "android"),
+            (self.rust, "rust"),
+            (self.go, "go"),
+            (self.cpp, "cpp"),
+            (self.dart, "dart"),
+            (self.docs, "docs"),
+            (self.k8s, "k8s"),
+            (self.terraform, "terraform"),
+            (self.aws, "aws"),
+            (self.gcloud, "gcloud"),
+            (self.azure, "azure"),
+        ] {
+            if on {
+                v.push(name.to_string());
+            }
+        }
+        v
+    }
+}
+
+/// Flags accepted in front of the forwarded Claude arguments.
+#[derive(Debug, Parser, Default, Clone, PartialEq)]
+#[command(
+    name = "claude_here",
+    version,
+    about = "Run Claude Code in a project-scoped Docker sandbox",
+    long_about = "Run Claude Code in a project-scoped Docker sandbox.\n\n\
+Every argument that is not a claude_here flag is forwarded to `claude` inside the container.\n\
+Use `--` to force forwarding. Subcommands: init, build, update, config, net, toolchains, completions, uninstall.",
+    disable_help_subcommand = true
+)]
+pub struct RunFlags {
+    /// Custom local image to run instead of building the toolchain chain.
+    #[arg(long, value_name = "NAME")]
+    pub image: Option<String>,
+    #[command(flatten)]
+    pub tc: ToolchainFlags,
     /// Mount a host path read-only (`path` or `host:container`). Repeatable.
     #[arg(long, value_name = "PATH")]
     pub mount: Vec<String>,
@@ -153,29 +189,7 @@ pub struct RunFlags {
 impl RunFlags {
     /// Toolchain names enabled by the per-toolchain flags and `--toolchain`.
     pub fn toolchain_names(&self) -> Vec<String> {
-        let mut v = self.toolchain.clone();
-        for (on, name) in [
-            (self.node, "node"),
-            (self.uv, "uv"),
-            (self.python, "python"),
-            (self.jvm, "jvm"),
-            (self.android, "android"),
-            (self.rust, "rust"),
-            (self.go, "go"),
-            (self.cpp, "cpp"),
-            (self.dart, "dart"),
-            (self.docs, "docs"),
-            (self.k8s, "k8s"),
-            (self.terraform, "terraform"),
-            (self.aws, "aws"),
-            (self.gcloud, "gcloud"),
-            (self.azure, "azure"),
-        ] {
-            if on {
-                v.push(name.to_string());
-            }
-        }
-        v
+        self.tc.names()
     }
 
     /// The CLI layer as a config overlay.
@@ -253,8 +267,17 @@ pub enum Command {
         #[arg(long)]
         rebuild: bool,
     },
-    /// Rebuild the base image without cache to pick up a new Claude Code release.
-    Update,
+    /// Fetch the newest Claude Code release, accept it and rebuild the Claude
+    /// layer of this project's image. Toolchain flags select the same image a
+    /// run with them would use.
+    Update {
+        #[command(flatten)]
+        tc: ToolchainFlags,
+        /// Also refresh the operating system of the base image (`--no-cache
+        /// --pull`); every image rebuilds on its next start.
+        #[arg(long)]
+        base: bool,
+    },
     /// Show or change configuration.
     Config(ConfigArgs),
     /// Inspect recorded network activity.
@@ -538,7 +561,7 @@ mod tests {
         let s = split_args(v(&["--npm", "--uv", "-t", "docs", "-p", "x"]));
         assert_eq!(s.tool, v(&["--npm", "--uv", "-t", "docs"]));
         let f = parse(s.tool);
-        assert!(f.node && f.uv);
+        assert!(f.tc.node && f.tc.uv);
         let mut names = f.toolchain_names();
         names.sort();
         assert_eq!(names, v(&["docs", "node", "uv"]));
