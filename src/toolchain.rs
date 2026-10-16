@@ -33,6 +33,55 @@ pub struct Lsp {
     pub extensions: &'static [(&'static str, &'static str)],
 }
 
+/// What a toolchain needs from `docker run` beyond its image layer (ADR 0010).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunNeeds {
+    /// Drop `--security-opt no-new-privileges`, because setuid helpers in the
+    /// image must work. The layer is expected to leave no other setuid file.
+    pub allow_new_privileges: bool,
+    /// Syscalls allowed on top of Docker's default seccomp profile.
+    pub syscalls: &'static [&'static str],
+    /// Named docker volumes, `(key, container path relative to the container
+    /// home)`. The volume is `claude_here-<key>-<sha8(project path)>`, one per
+    /// project, for content that cannot live on a bind mount.
+    pub volumes: &'static [(&'static str, &'static str)],
+}
+
+impl RunNeeds {
+    pub const NONE: RunNeeds = RunNeeds {
+        allow_new_privileges: false,
+        syscalls: &[],
+        volumes: &[],
+    };
+}
+
+/// What rootless podman needs that Docker's default profile reserves for
+/// `CAP_SYS_ADMIN` (namespaces, mounts, the session keyring). Generated into
+/// the profile by `seccomp::profile`; `bpf` is deliberately absent.
+pub const PODMAN_SYSCALLS: &[&str] = &[
+    "unshare",
+    "clone",
+    "clone3",
+    "setns",
+    "mount",
+    "umount2",
+    "pivot_root",
+    "mount_setattr",
+    "open_tree",
+    "move_mount",
+    "fsopen",
+    "fsconfig",
+    "fsmount",
+    "fspick",
+    "sethostname",
+    "setdomainname",
+    "keyctl",
+];
+
+/// The toolchain that runs containers inside the sandbox; the entrypoint and
+/// the session environment key on it.
+pub const CONTAINERS: &str = "docker";
+
 /// One shipped toolchain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Toolchain {
@@ -64,6 +113,9 @@ pub struct Toolchain {
     /// Host credential directories mounted when the cloud mode is not `none`.
     /// `(host path, container path relative to the container home)`.
     pub credentials: &'static [(&'static str, &'static str)],
+    /// Run-shape changes this toolchain needs; `RunNeeds::NONE` for all but
+    /// `docker`.
+    pub run: RunNeeds,
 }
 
 const NODE: &str = include_str!("../images/toolchains/node.dockerfile");
@@ -81,6 +133,7 @@ const TERRAFORM: &str = include_str!("../images/toolchains/terraform.dockerfile"
 const AWS: &str = include_str!("../images/toolchains/aws.dockerfile");
 const GCLOUD: &str = include_str!("../images/toolchains/gcloud.dockerfile");
 const AZURE: &str = include_str!("../images/toolchains/azure.dockerfile");
+const DOCKER: &str = include_str!("../images/toolchains/docker.dockerfile");
 
 /// Hosts every session needs, independent of the enabled toolchains.
 pub const BASE_DOMAINS: &[&str] = &["api.anthropic.com", "statsig.anthropic.com", "claude.ai"];
@@ -115,6 +168,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             ],
         }],
         credentials: &[],
+        run: RunNeeds::NONE,
     },
     Toolchain {
         name: "uv",
@@ -137,6 +191,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         ],
         lsp: &[],
         credentials: &[],
+        run: RunNeeds::NONE,
     },
     Toolchain {
         name: "python",
@@ -159,6 +214,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             extensions: &[(".py", "python"), (".pyi", "python")],
         }],
         credentials: &[],
+        run: RunNeeds::NONE,
     },
     Toolchain {
         name: "jvm",
@@ -196,6 +252,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             extensions: &[(".java", "java")],
         }],
         credentials: &[],
+        run: RunNeeds::NONE,
     },
     Toolchain {
         name: "android",
@@ -213,6 +270,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         domains: &["dl.google.com", "maven.google.com", "services.gradle.org"],
         lsp: &[],
         credentials: &[],
+        run: RunNeeds::NONE,
     },
     Toolchain {
         name: "rust",
@@ -241,6 +299,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             extensions: &[(".rs", "rust")],
         }],
         credentials: &[],
+        run: RunNeeds::NONE,
     },
     Toolchain {
         name: "go",
@@ -268,6 +327,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             extensions: &[(".go", "go")],
         }],
         credentials: &[],
+        run: RunNeeds::NONE,
     },
     Toolchain {
         name: "cpp",
@@ -298,6 +358,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             ],
         }],
         credentials: &[],
+        run: RunNeeds::NONE,
     },
     Toolchain {
         name: "dart",
@@ -325,6 +386,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             extensions: &[(".dart", "dart")],
         }],
         credentials: &[],
+        run: RunNeeds::NONE,
     },
     Toolchain {
         name: "docs",
@@ -337,6 +399,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         domains: &["github.com", "objects.githubusercontent.com"],
         lsp: &[],
         credentials: &[],
+        run: RunNeeds::NONE,
     },
     Toolchain {
         name: "k8s",
@@ -354,6 +417,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         ],
         lsp: &[],
         credentials: &[("~/.kube", ".kube")],
+        run: RunNeeds::NONE,
     },
     Toolchain {
         name: "terraform",
@@ -366,6 +430,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         domains: &["releases.hashicorp.com", "registry.terraform.io"],
         lsp: &[],
         credentials: &[],
+        run: RunNeeds::NONE,
     },
     Toolchain {
         name: "aws",
@@ -378,6 +443,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         domains: &["awscli.amazonaws.com"],
         lsp: &[],
         credentials: &[("~/.aws", ".aws")],
+        run: RunNeeds::NONE,
     },
     Toolchain {
         name: "gcloud",
@@ -390,6 +456,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         domains: &["dl.google.com", "googleapis.com"],
         lsp: &[],
         credentials: &[("~/.config/gcloud", ".config/gcloud")],
+        run: RunNeeds::NONE,
     },
     Toolchain {
         name: "azure",
@@ -402,6 +469,32 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         domains: &["pypi.org", "files.pythonhosted.org"],
         lsp: &[],
         credentials: &[("~/.azure", ".azure")],
+        run: RunNeeds::NONE,
+    },
+    Toolchain {
+        name: "docker",
+        aliases: &["podman"],
+        description: "rootless podman, docker CLI shim and API socket: nested containers, testcontainers",
+        order: 150,
+        implies: &[],
+        dockerfile: DOCKER,
+        caches: &[],
+        // Subdomains are included by the allowlist, so `docker.io` covers
+        // registry-1, auth and index; the Hub's blobs come from Cloudflare.
+        domains: &[
+            "docker.io",
+            "production.cloudflare.docker.com",
+            "ghcr.io",
+            "pkg-containers.githubusercontent.com",
+            "quay.io",
+        ],
+        lsp: &[],
+        credentials: &[],
+        run: RunNeeds {
+            allow_new_privileges: true,
+            syscalls: PODMAN_SYSCALLS,
+            volumes: &[("containers", ".local/share/containers/storage")],
+        },
     },
 ];
 
@@ -467,6 +560,25 @@ pub fn domains(chain: &[&Toolchain]) -> Vec<String> {
     v
 }
 
+/// The union of what the chain needs from `docker run`.
+pub fn run_needs(
+    chain: &[&Toolchain],
+) -> (bool, Vec<&'static str>, Vec<(&'static str, &'static str)>) {
+    let mut allow = false;
+    let mut syscalls: Vec<&'static str> = Vec::new();
+    let mut volumes: Vec<(&'static str, &'static str)> = Vec::new();
+    for t in chain {
+        allow |= t.run.allow_new_privileges;
+        for s in t.run.syscalls {
+            if !syscalls.contains(s) {
+                syscalls.push(s);
+            }
+        }
+        volumes.extend(t.run.volumes.iter().copied());
+    }
+    (allow, syscalls, volumes)
+}
+
 /// Credential directories the chain wants when the cloud mode allows them.
 pub fn credentials(chain: &[&Toolchain]) -> Vec<(&'static str, &'static str)> {
     chain
@@ -500,7 +612,7 @@ mod tests {
     #[test]
     fn expensive_toolchains_build_before_cheap_ones() {
         let position = |name: &str| find(name).map_or(u32::MAX, |t| t.order);
-        for cheap in ["terraform", "k8s", "aws", "docs"] {
+        for cheap in ["terraform", "k8s", "aws", "docs", "docker"] {
             for expensive in ["dart", "gcloud", "jvm", "rust"] {
                 assert!(
                     position(expensive) < position(cheap),
@@ -582,6 +694,42 @@ mod tests {
         assert_eq!(
             credentials(&chain),
             vec![("~/.aws", ".aws"), ("~/.kube", ".kube")]
+        );
+    }
+
+    #[test]
+    fn only_docker_changes_the_run_shape() {
+        for t in TOOLCHAINS {
+            assert_eq!(t.run != RunNeeds::NONE, t.name == CONTAINERS, "{}", t.name);
+        }
+        let chain = resolve(&["rust".to_string()]).unwrap_or_default();
+        assert_eq!(run_needs(&chain), (false, vec![], vec![]));
+        let chain = resolve(&["docker".to_string(), "rust".to_string()]).unwrap_or_default();
+        let (allow, syscalls, volumes) = run_needs(&chain);
+        assert!(allow);
+        assert_eq!(syscalls, PODMAN_SYSCALLS);
+        assert_eq!(
+            volumes,
+            vec![("containers", ".local/share/containers/storage")]
+        );
+    }
+
+    /// With `no-new-privileges` off, the layer must leave exactly the two
+    /// uid-mapping helpers setuid and fail its build otherwise.
+    #[test]
+    fn docker_layer_strips_every_other_setuid_file() {
+        let d = find("docker").map_or("", |t| t.dockerfile);
+        assert!(d.contains("! -name newuidmap ! -name newgidmap -exec chmod ug-s"));
+        assert!(d.contains(r#"[ "${left}" = "/usr/bin/newgidmap /usr/bin/newuidmap " ]"#));
+        assert!(d.contains("exit 1"));
+        assert!(
+            d.contains("--add-subuids"),
+            "rootless podman needs a subuid range"
+        );
+        assert!(d.contains("/etc/containers/nodocker"));
+        assert!(
+            !d.contains("fuse-overlayfs"),
+            "native overlay only (ADR 0010)"
         );
     }
 

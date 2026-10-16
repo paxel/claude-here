@@ -209,6 +209,15 @@ impl SessionInfo {
         if self.net_capture {
             s.push_str("All network traffic of this session is recorded for later review. ");
         }
+        if self
+            .toolchains
+            .iter()
+            .any(|t| t == crate::toolchain::CONTAINERS)
+        {
+            s.push_str(
+                "The docker toolchain is on: `docker` and `podman` run rootless containers inside this sandbox as the sandbox user (DOCKER_HOST is set, testcontainers works). They share this sandbox's network filter, capture, pids and memory limits; no host docker daemon, host path or host image is reachable, and `--privileged` grants nothing beyond the user namespace. For the uid-mapping helpers this needs, no-new-privileges is off for this session; nothing else is relaxed. ",
+            );
+        }
         s
     }
 }
@@ -280,5 +289,14 @@ mod tests {
         assert!(p.contains("Cloud mode is 'none'"));
         assert!(p.contains("/home/ni/p"));
         assert!(p.contains("recorded"));
+        assert!(!p.contains("docker toolchain"));
+
+        let with_docker = SessionInfo {
+            toolchains: vec!["rust".into(), "docker".into()],
+            ..info
+        };
+        let p = with_docker.system_prompt();
+        assert!(p.contains("The docker toolchain is on"));
+        assert!(p.contains("no-new-privileges is off"));
     }
 }

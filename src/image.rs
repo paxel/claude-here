@@ -33,13 +33,23 @@ pub fn base_tag(uid: &u32) -> String {
 /// prefix of a chain is itself a valid tag, so `--go` and `--go --jvm` share
 /// the `base-go` layer.
 pub fn chain_tag(uid: u32, names: &[String]) -> String {
-    let mut tag = base_tag(&uid);
+    let base = base_tag(&uid);
+    let mut tag = base.clone();
     for n in names {
         tag.push('-');
         tag.push_str(n);
     }
+    if tag.len() > MAX_STEM {
+        // Only a chain of nearly every toolchain gets here; its prefixes keep
+        // their readable tags, the full chain gets a hash of its names.
+        return format!("{base}-{}", short_hash(&names.join("-")));
+    }
     tag
 }
+
+/// Longest toolchain chain tag that still leaves room for `-user-<sha8>` and
+/// `-claude` within docker's 128 character tag limit.
+const MAX_STEM: usize = 128 - "-user-".len() - 8 - "-claude".len();
 
 /// Tag of the Claude layer on top of `parent`; the image a session runs.
 pub fn claude_tag(parent: &str) -> String {
@@ -589,6 +599,9 @@ mod tests {
             Path::new("/home/axel/p"),
         ));
         assert!(tag.len() <= 128, "tag too long: {} ({})", tag, tag.len());
+        // Every prefix short enough to be readable stays readable.
+        let few = chain_tag(1000, &["rust".to_string(), "docker".to_string()]);
+        assert_eq!(few, "claude_here:base-u1000-rust-docker");
     }
 
     #[test]

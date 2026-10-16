@@ -74,6 +74,13 @@ pub struct RunSpec {
     pub extra_caps: Vec<String>,
     /// Raw flags appended before the image name.
     pub extra_args: Vec<String>,
+    /// Keep `--security-opt no-new-privileges` off: a toolchain needs setuid
+    /// helpers (ADR 0010). The default, `false`, sets it.
+    pub allow_new_privileges: bool,
+    /// Custom seccomp profile file instead of Docker's default.
+    pub seccomp: Option<PathBuf>,
+    /// Named volumes `(name, container path)`.
+    pub volumes: Vec<(String, PathBuf)>,
     pub tty: bool,
     /// Command executed by the entrypoint.
     pub command: Vec<String>,
@@ -97,7 +104,12 @@ impl RunSpec {
         for cap in &self.extra_caps {
             a.extend(["--cap-add".into(), cap.clone()]);
         }
-        a.extend(["--security-opt".into(), "no-new-privileges".into()]);
+        if !self.allow_new_privileges {
+            a.extend(["--security-opt".into(), "no-new-privileges".into()]);
+        }
+        if let Some(p) = &self.seccomp {
+            a.extend(["--security-opt".into(), format!("seccomp={}", p.display())]);
+        }
         a.extend(["--pids-limit".into(), PIDS_LIMIT.to_string()]);
         a.extend(["--tmpfs".into(), "/tmp:exec".into()]);
         if let Some(m) = &self.memory {
@@ -109,6 +121,9 @@ impl RunSpec {
         a.extend(["-w".into(), self.workdir.display().to_string()]);
         for m in &self.mounts {
             a.extend(["-v".into(), m.to_flag()]);
+        }
+        for (name, path) in &self.volumes {
+            a.extend(["-v".into(), format!("{name}:{}", path.display())]);
         }
         for (k, v) in &self.env {
             a.extend(["-e".into(), format!("{k}={v}")]);
@@ -123,6 +138,40 @@ impl RunSpec {
         a.push(self.image.clone());
         a.extend(self.command.iter().cloned());
         a
+    }
+}
+
+#[cfg(test)]
+mod run_shape_tests {
+    use super::*;
+
+    #[test]
+    fn relaxed_shape_drops_nnp_and_names_profile_and_volume() {
+        let spec = RunSpec {
+            image: "claude_here:base-docker".into(),
+            allow_new_privileges: true,
+            seccomp: Some("/home/axel/.config/claude_here/seccomp.json".into()),
+            volumes: vec![(
+                "claude_here-containers-abcd1234".into(),
+                "/home/ni/.local/share/containers/storage".into(),
+            )],
+            ..Default::default()
+        };
+        let s = spec.to_args().join(" ");
+        assert!(!s.contains("no-new-privileges"));
+        assert!(s.contains("--security-opt seccomp=/home/axel/.config/claude_here/seccomp.json"));
+        assert!(s.contains(
+            "-v claude_here-containers-abcd1234:/home/ni/.local/share/containers/storage "
+        ));
+        assert!(s.contains("--cap-drop ALL"), "capabilities are not relaxed");
+        assert!(s.contains("--pids-limit 4096"));
+    }
+
+    #[test]
+    fn default_shape_keeps_nnp_and_docker_profile() {
+        let s = RunSpec::default().to_args().join(" ");
+        assert!(s.contains("--security-opt no-new-privileges"));
+        assert!(!s.contains("seccomp="));
     }
 }
 
@@ -290,6 +339,9 @@ mod tests {
             cpus: None,
             extra_caps: vec!["NET_ADMIN".into()],
             extra_args: vec!["--network".into(), "mynet".into()],
+            allow_new_privileges: false,
+            seccomp: None,
+            volumes: vec![],
             tty: true,
             command: vec!["claude".into(), "-p".into(), "hi".into()],
         };

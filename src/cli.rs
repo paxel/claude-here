@@ -73,6 +73,9 @@ pub struct ToolchainFlags {
     /// Azure CLI (alias: --az).
     #[arg(long, visible_alias = "az", help_heading = "Toolchains")]
     pub azure: bool,
+    /// Rootless podman with the docker CLI and API socket: nested containers, testcontainers (alias: --podman).
+    #[arg(long, visible_alias = "podman", help_heading = "Toolchains")]
+    pub docker: bool,
 }
 
 impl ToolchainFlags {
@@ -95,6 +98,7 @@ impl ToolchainFlags {
             (self.aws, "aws"),
             (self.gcloud, "gcloud"),
             (self.azure, "azure"),
+            (self.docker, "docker"),
         ] {
             if on {
                 v.push(name.to_string());
@@ -112,7 +116,7 @@ impl ToolchainFlags {
     about = "Run Claude Code in a project-scoped Docker sandbox",
     long_about = "Run Claude Code in a project-scoped Docker sandbox.\n\n\
 Every argument that is not a claude_here flag is forwarded to `claude` inside the container.\n\
-Use `--` to force forwarding. Subcommands: init, build, update, config, net, toolchains, completions, uninstall.",
+Use `--` to force forwarding. Subcommands: init, build, update, config, net, toolchains, volumes, completions, uninstall.",
     disable_help_subcommand = true
 )]
 pub struct RunFlags {
@@ -291,6 +295,15 @@ pub enum Command {
     Net(NetArgs),
     /// List the shipped toolchains.
     Toolchains,
+    /// List the container storage volumes of the docker toolchain, or remove them.
+    Volumes {
+        /// Remove instead of listing: this project's volume, or every project's with --all.
+        #[arg(long)]
+        rm: bool,
+        /// Every project's volumes, not only this project's.
+        #[arg(long)]
+        all: bool,
+    },
     /// Print shell completions.
     Completions {
         /// Shell: fish, bash, zsh.
@@ -443,6 +456,8 @@ const BOOL_FLAGS: &[&str] = &[
     "--gcloud",
     "--azure",
     "--az",
+    "--docker",
+    "--podman",
     "--ssh",
     "--gh",
     "--no-net-log",

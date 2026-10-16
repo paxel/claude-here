@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use crate::config::{CloudMode, Config, GitMode, MountMode, NetMode};
 use crate::docker::{Docker, Mount, RunSpec, uses_host_network};
 use crate::git::GitLayout;
-use crate::image::{self, BuildPolicy, Builder, Identity};
+use crate::image::{self, BuildPolicy, Builder, Identity, short_hash};
 use crate::paths::{HostPaths, PathRewriter, project_dir};
 use crate::session::{MountInfo, SessionInfo, new_session_id, sanitize_name};
 use crate::toolchain::{self, Toolchain};
@@ -209,6 +209,8 @@ pub fn assemble(
     );
     add_truststore(cfg, paths, &chome, &mut mounts, &mut env);
     add_ca(cfg, paths, &mut mounts, &mut env);
+    let (allow_new_privileges, seccomp, volumes) = run_shape(paths, facts, req, &chome);
+    add_containers(facts, req, &mut env);
 
     let (ssh, gh) = add_ssh_gh(cfg, facts, &chome, &mut mounts, &mut env, &mut warnings);
     add_cloud_credentials(
@@ -248,14 +250,11 @@ pub fn assemble(
         env_files: env_files(token_file, gh.then(|| gh_env_file(paths, &req.session_id))),
         memory: cfg.memory.clone(),
         cpus: cfg.cpus.map(|c| c.to_string()),
-        extra_caps: if cfg.net_mode == NetMode::Allowlist {
-            // The root phase needs it for ipset/iptables; the sandbox user is
-            // unprivileged and no-new-privileges is set, so its reach is unchanged.
-            vec!["NET_ADMIN".to_string()]
-        } else {
-            Vec::new()
-        },
+        extra_caps: extra_caps(cfg),
         extra_args: cfg.docker_args.clone(),
+        allow_new_privileges,
+        seccomp,
+        volumes,
         tty: facts.tty,
         command,
     };
@@ -441,6 +440,75 @@ pub const CA_ENV: &[(&str, &str)] = &[
     ("AWS_CA_BUNDLE", CA_BUNDLE),
     ("CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE", CA_BUNDLE),
 ];
+
+/// Capabilities beyond `docker::CAPS`. `NET_ADMIN` is what the root phase
+/// needs for ipset/iptables under the allowlist; the sandbox user is
+/// unprivileged, so its reach is unchanged.
+fn extra_caps(cfg: &Config) -> Vec<String> {
+    if cfg.net_mode == NetMode::Allowlist {
+        vec!["NET_ADMIN".to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
+/// What the enabled toolchains need from `docker run` beyond the image
+/// (ADR 0010): the `no-new-privileges` switch, the seccomp profile file and
+/// the per-project named volumes.
+fn run_shape(
+    paths: &HostPaths,
+    facts: &HostFacts,
+    req: &RunRequest,
+    chome: &Path,
+) -> (bool, Option<PathBuf>, Vec<(String, PathBuf)>) {
+    let (allow_new_privileges, syscalls, volume_needs) = toolchain::run_needs(&req.toolchains);
+    let volumes = volume_needs
+        .iter()
+        .map(|(key, path)| (volume_name(key, &facts.cwd), chome.join(path)))
+        .collect();
+    let seccomp = (!syscalls.is_empty()).then(|| paths.seccomp_file());
+    (allow_new_privileges, seccomp, volumes)
+}
+
+/// Name of a per-project named volume (ADR 0010).
+pub fn volume_name(key: &str, project: &Path) -> String {
+    format!(
+        "claude_here-{key}-{}",
+        short_hash(&project.display().to_string())
+    )
+}
+
+/// Prefix shared by every volume of `key`, for listing and cleanup.
+pub fn volume_prefix(key: &str) -> String {
+    format!("claude_here-{key}-")
+}
+
+/// With the `docker` toolchain: tell the entrypoint to start the podman API
+/// socket, and point API clients at it (ADR 0010). `TESTCONTAINERS_RYUK_PRIVILEGED`
+/// keeps testcontainers' reaper on; under rootless podman "privileged" stays
+/// inside the user namespace.
+fn add_containers(facts: &HostFacts, req: &RunRequest, env: &mut Vec<(String, String)>) {
+    if !req
+        .toolchains
+        .iter()
+        .any(|t| t.name == toolchain::CONTAINERS)
+    {
+        return;
+    }
+    let runtime_dir = format!("/run/user/{}", facts.uid);
+    env.extend([
+        ("CH_CONTAINERS".to_string(), "1".to_string()),
+        ("XDG_RUNTIME_DIR".to_string(), runtime_dir.clone()),
+        (
+            "DOCKER_HOST".to_string(),
+            format!("unix://{runtime_dir}/podman/podman.sock"),
+        ),
+        (
+            "TESTCONTAINERS_RYUK_PRIVILEGED".to_string(),
+            "true".to_string(),
+        ),
+    ]);
+}
 
 /// Fixed session variables plus the configured `env` entries; returns the
 /// names to pass through from the host.
@@ -657,6 +725,11 @@ pub fn prepare_host_dirs(
         fs::create_dir_all(paths.cache_dir())?;
     }
     crate::plugin::generate(&paths.plugin_dir(), chain)?;
+    if let Some(file) = &spec.seccomp {
+        let (_, syscalls, _) = toolchain::run_needs(chain);
+        fs::write(file, crate::seccomp::profile(&syscalls)?)
+            .with_context(|| format!("writing {}", file.display()))?;
+    }
     stage_net_summaries(paths, session_id, project)?;
     for m in &spec.mounts {
         if !m.read_only && !m.host.exists() {
@@ -1096,6 +1169,46 @@ mod tests {
             }
         }
         assert!(!s.contains("SSL_CERT_FILE"));
+        Ok(())
+    }
+
+    #[test]
+    fn docker_toolchain_relaxes_the_run_shape_and_wires_the_socket() -> Result<()> {
+        let c = cfg(ConfigFile {
+            toolchains: vec!["docker".into()],
+            ..Default::default()
+        });
+        let a = assemble(&c, &paths(), &facts(), &git(), &req_with(&["docker"]))?;
+        let s = a.spec.to_args().join(" ");
+        assert!(!s.contains("--security-opt no-new-privileges"));
+        assert!(s.contains("--security-opt seccomp=/home/axel/.config/claude_here/seccomp.json"));
+        assert!(s.contains("--cap-drop ALL"));
+        assert!(!s.contains("SYS_ADMIN"));
+        let hash = short_hash("/home/axel/data/development/foo");
+        assert!(s.contains(&format!(
+            "-v claude_here-containers-{hash}:/home/ni/.local/share/containers/storage "
+        )));
+        assert!(s.contains("-e CH_CONTAINERS=1"));
+        assert!(s.contains("-e XDG_RUNTIME_DIR=/run/user/1000"));
+        assert!(s.contains("-e DOCKER_HOST=unix:///run/user/1000/podman/podman.sock"));
+        assert!(s.contains("-e TESTCONTAINERS_RYUK_PRIVILEGED=true"));
+        assert!(a.info.system_prompt().contains("no-new-privileges"));
+        Ok(())
+    }
+
+    #[test]
+    fn without_docker_the_run_shape_is_untouched() -> Result<()> {
+        let c = cfg(ConfigFile {
+            toolchains: vec!["rust".into()],
+            ..Default::default()
+        });
+        let a = assemble(&c, &paths(), &facts(), &git(), &req_with(&["rust"]))?;
+        let s = a.spec.to_args().join(" ");
+        assert!(s.contains("--security-opt no-new-privileges"));
+        assert!(!s.contains("seccomp="));
+        assert!(!s.contains("claude_here-containers-"));
+        assert!(!s.contains("DOCKER_HOST"));
+        assert!(!a.info.system_prompt().contains("no-new-privileges"));
         Ok(())
     }
 

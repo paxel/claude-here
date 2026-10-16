@@ -86,6 +86,12 @@ impl HostPaths {
         self.config_dir.join("cache")
     }
 
+    /// The seccomp profile written before a run that needs one (ADR 0010).
+    /// Not per session: its content depends on the binary only.
+    pub fn seccomp_file(&self) -> PathBuf {
+        self.config_dir.join("seccomp.json")
+    }
+
     /// Expand a leading `~` or `~/` to the host home directory.
     pub fn expand_tilde(&self, raw: &str) -> PathBuf {
         if raw == "~" {

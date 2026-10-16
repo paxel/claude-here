@@ -11,11 +11,13 @@ pub mod net;
 pub mod paths;
 pub mod plugin;
 pub mod run;
+pub mod seccomp;
 pub mod session;
 pub mod toolchain;
 pub mod update;
 
 use std::io::Write;
+use std::path::Path;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
@@ -220,6 +222,7 @@ fn run_subcommand(paths: &HostPaths, command: Command) -> Result<()> {
             Ok(())
         }
         Command::Net(args) => net_command(paths, args.action),
+        Command::Volumes { rm, all } => volumes_command(rm, all),
         Command::Completions { shell, bin } => {
             print!("{}", completions_text(shell, &bin));
             Ok(())
@@ -346,6 +349,51 @@ fn print_toolchains() {
     }
 }
 
+/// The named volumes of the docker toolchain on this daemon (ADR 0010).
+fn claude_here_volumes(docker: &docker::Docker) -> Vec<String> {
+    docker
+        .output(&["volume", "ls", "--format", "{{.Name}}"])
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.starts_with(&run::volume_prefix("containers")))
+        .map(str::to_string)
+        .collect()
+}
+
+/// `names` narrowed to one project's volumes, or all of them.
+fn select_volumes(names: &[String], project: Option<&Path>) -> Vec<String> {
+    let wanted: Option<String> = project.map(|p| run::volume_name("containers", p));
+    names
+        .iter()
+        .filter(|n| wanted.as_ref().is_none_or(|w| *n == w))
+        .cloned()
+        .collect()
+}
+
+fn volumes_command(rm: bool, all: bool) -> Result<()> {
+    let docker = docker::Docker::default();
+    docker.check()?;
+    let cwd = std::env::current_dir().context("reading current directory")?;
+    let project = (!all).then_some(cwd.as_path());
+    let names = select_volumes(&claude_here_volumes(&docker), project);
+    if names.is_empty() {
+        println!(
+            "no container storage volume{}",
+            if all { "s" } else { " for this project" }
+        );
+        return Ok(());
+    }
+    for n in &names {
+        if rm {
+            docker.output(&["volume", "rm", n])?;
+            println!("removed {n}");
+        } else {
+            println!("{n}");
+        }
+    }
+    Ok(())
+}
+
 /// Shell completion script for one of the binaries.
 pub fn completions_text(shell: clap_complete::Shell, bin: &str) -> String {
     let mut cmd = RunFlags::command()
@@ -396,13 +444,20 @@ fn uninstall(paths: &HostPaths, purge: bool, yes: bool) -> Result<()> {
             eprintln!("claude_here: {e:#}");
         }
     }
+    let volumes = claude_here_volumes(&docker);
+    for v in &volumes {
+        if let Err(e) = docker.output(&["volume", "rm", v]) {
+            eprintln!("claude_here: {e:#}");
+        }
+    }
     if purge && paths.config_dir.exists() {
         std::fs::remove_dir_all(&paths.config_dir)
             .with_context(|| format!("removing {}", paths.config_dir.display()))?;
     }
     println!(
-        "removed {} image(s){}",
+        "removed {} image(s), {} volume(s){}",
         tags.len(),
+        volumes.len(),
         if purge { ", config purged" } else { "" }
     );
     println!("binary: remove with `cargo uninstall claude-here` or delete it from your PATH");
@@ -412,6 +467,22 @@ fn uninstall(paths: &HostPaths, purge: bool, yes: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn volumes_are_selected_by_project_or_all() {
+        let mine = run::volume_name("containers", Path::new("/home/axel/foo"));
+        let other = run::volume_name("containers", Path::new("/home/axel/bar"));
+        let names = vec![mine.clone(), other.clone()];
+        assert_eq!(
+            select_volumes(&names, Some(Path::new("/home/axel/foo"))),
+            vec![mine]
+        );
+        assert_eq!(select_volumes(&names, None), names);
+        assert_eq!(
+            select_volumes(&names, Some(Path::new("/home/axel/baz"))),
+            Vec::<String>::new()
+        );
+    }
 
     #[test]
     fn saving_does_not_repeat_toolchains() -> Result<()> {
