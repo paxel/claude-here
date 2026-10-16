@@ -567,6 +567,18 @@ mod tests {
         assert!(has_instructions("# c\nRUN apt-get install -y x\n"));
     }
 
+    /// The contract between `run::add_containers` and the root phase: the
+    /// switch it sets, the socket path it announces, the kernel floor of
+    /// ADR 0010.
+    #[test]
+    fn entrypoint_starts_the_podman_socket_on_the_containers_switch() {
+        assert!(ENTRYPOINT.contains("CH_CONTAINERS=\"${CH_CONTAINERS:-0}\""));
+        assert!(ENTRYPOINT.contains("podman system service --time=0 \"unix://${sock}\""));
+        assert!(ENTRYPOINT.contains("/podman/podman.sock"));
+        assert!(ENTRYPOINT.contains("kernel 5.11 or newer"));
+        assert!(ENTRYPOINT.contains("kill -TERM \"${PODMAN_PID}\""));
+    }
+
     #[test]
     fn wraps_layer_as_root_with_entrypoint() {
         let t = wrap_user_layer("claude_here:base-u1000-rust", "ni", "RUN echo hi");

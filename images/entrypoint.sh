@@ -13,6 +13,7 @@ CH_NET_CAPTURE="${CH_NET_CAPTURE:-1}"
 CH_NET_MODE="${CH_NET_MODE:-full}"
 CH_NET_ALLOW="${CH_NET_ALLOW:-}"
 CH_PLUGIN_DIR="${CH_PLUGIN_DIR:-}"
+CH_CONTAINERS="${CH_CONTAINERS:-0}"
 CAP_DIR=/var/log/claude_here
 OUT_DIR=/var/log/claude_here_out
 HOME_DIR="/home/${CH_USER}"
@@ -87,6 +88,41 @@ if [ -n "${CH_PLUGIN_DIR}" ] && [ -d "${CH_PLUGIN_DIR}" ]; then
   fi
 fi
 
+# Containers inside the sandbox (ADR 0010): rootless podman as the sandbox
+# user needs a runtime dir, a storage root it owns (the named volume arrives
+# root-owned the first time) and the Docker API socket API clients expect.
+# Native overlay in a user namespace exists since kernel 5.11; nothing older
+# gets a silent vfs fallback.
+PODMAN_PID=""
+if [ "${CH_CONTAINERS}" = "1" ]; then
+  kv="$(uname -r | cut -d. -f1-2)"
+  if [ "${kv%%.*}" -lt 5 ] || { [ "${kv%%.*}" -eq 5 ] && [ "${kv#*.}" -lt 11 ]; }; then
+    echo "claude_here: the docker toolchain needs kernel 5.11 or newer for rootless overlay; host kernel is $(uname -r)" >&2
+    exit 125
+  fi
+  RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/${CH_UID}}"
+  mkdir -p "${RUNTIME_DIR}/podman"
+  chown "${CH_UID}:${CH_GID}" "${RUNTIME_DIR}" "${RUNTIME_DIR}/podman"
+  chmod 700 "${RUNTIME_DIR}"
+  storage="${HOME_DIR}/.local/share/containers/storage"
+  if [ -d "${storage}" ] && [ "$(stat -c %u "${storage}")" != "${CH_UID}" ]; then
+    chown "${CH_UID}:${CH_GID}" "${storage}"
+  fi
+  sock="${RUNTIME_DIR}/podman/podman.sock"
+  rm -f "${sock}"
+  env HOME="${HOME_DIR}" USER="${CH_USER}" LOGNAME="${CH_USER}" XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+    setsid setpriv --reuid="${CH_UID}" --regid="${CH_GID}" --init-groups -- \
+    podman system service --time=0 "unix://${sock}" >/dev/null 2>"${RUNTIME_DIR}/podman/service.err" &
+  PODMAN_PID=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -S "${sock}" ] && break
+    sleep 0.5
+  done
+  if [ ! -S "${sock}" ]; then
+    echo "claude_here: warning: podman API socket did not appear; see ${RUNTIME_DIR}/podman/service.err" >&2
+  fi
+fi
+
 CHILD=""
 forward_term() { [ -n "${CHILD}" ] && kill -TERM "${CHILD}" 2>/dev/null || true; }
 # INT reaches the child through the terminal's process group already.
@@ -110,6 +146,11 @@ while :; do
     break
   fi
 done
+
+if [ -n "${PODMAN_PID}" ]; then
+  kill -TERM "${PODMAN_PID}" 2>/dev/null || true
+  wait "${PODMAN_PID}" 2>/dev/null || true
+fi
 
 if [ -n "${TCPDUMP_PID}" ]; then
   # let the last packets drain from the kernel buffer before stopping
