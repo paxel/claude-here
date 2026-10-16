@@ -433,7 +433,9 @@ restrict — that is why it takes an explicit grant.
 `--docker` puts rootless podman in the image and starts its Docker API socket
 at session start, so `docker build`, `docker run`, `docker compose` (as
 `podman compose`) and testcontainers work as they do on a workstation —
-`DOCKER_HOST` is set, Ryuk is on. Nothing reaches a host docker daemon: the
+`DOCKER_HOST` is set, and Ryuk is disabled as testcontainers documents for
+rootless podman (containers are still removed when the test process exits).
+Nothing reaches a host docker daemon: the
 nested containers run as the sandbox user inside a user namespace, share the
 sandbox's egress allowlist, network capture, pids and memory limits, and an
 escape from one of them lands in the sandbox, not on the host. `--privileged`

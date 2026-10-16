@@ -484,9 +484,9 @@ pub fn volume_prefix(key: &str) -> String {
 }
 
 /// With the `docker` toolchain: tell the entrypoint to start the podman API
-/// socket, and point API clients at it (ADR 0010). `TESTCONTAINERS_RYUK_PRIVILEGED`
-/// keeps testcontainers' reaper on; under rootless podman "privileged" stays
-/// inside the user namespace.
+/// socket, and point API clients at it (ADR 0010). Testcontainers documents
+/// rootless podman as "disable Ryuk"; it still removes its containers at JVM
+/// shutdown, only a `kill -9` leaks them.
 fn add_containers(facts: &HostFacts, req: &RunRequest, env: &mut Vec<(String, String)>) {
     if !req
         .toolchains
@@ -504,7 +504,7 @@ fn add_containers(facts: &HostFacts, req: &RunRequest, env: &mut Vec<(String, St
             format!("unix://{runtime_dir}/podman/podman.sock"),
         ),
         (
-            "TESTCONTAINERS_RYUK_PRIVILEGED".to_string(),
+            "TESTCONTAINERS_RYUK_DISABLED".to_string(),
             "true".to_string(),
         ),
     ]);
@@ -1191,7 +1191,8 @@ mod tests {
         assert!(s.contains("-e CH_CONTAINERS=1"));
         assert!(s.contains("-e XDG_RUNTIME_DIR=/run/user/1000"));
         assert!(s.contains("-e DOCKER_HOST=unix:///run/user/1000/podman/podman.sock"));
-        assert!(s.contains("-e TESTCONTAINERS_RYUK_PRIVILEGED=true"));
+        assert!(s.contains("-e TESTCONTAINERS_RYUK_DISABLED=true"));
+        assert!(!s.contains("RYUK_PRIVILEGED"));
         assert!(a.info.system_prompt().contains("no-new-privileges"));
         Ok(())
     }

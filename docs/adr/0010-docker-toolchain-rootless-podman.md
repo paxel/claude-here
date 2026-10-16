@@ -87,10 +87,11 @@ would be a path nobody tests.
 The entrypoint starts `podman system service --time=0` as the sandbox user on
 `/run/user/<uid>/podman/podman.sock` and exports `DOCKER_HOST`, so the first
 test run works instead of failing with "cannot connect to the docker daemon".
-`TESTCONTAINERS_RYUK_PRIVILEGED=true` keeps testcontainers' reaper on:
-sessions are long, and leaked containers of an afternoon's test runs would eat
-the pids limit. "Privileged" under rootless podman stays inside the user
-namespace.
+`TESTCONTAINERS_RYUK_DISABLED=true` is exported too: testcontainers' own
+documentation for rootless podman says to disable the reaper (Ryuk; the
+`TESTCONTAINERS_RYUK_PRIVILEGED` switch only ever applied to rootful podman
+before 1.19). Testcontainers still removes its containers when the test JVM
+exits; only a `kill -9` leaks them, and the whole set dies with the session.
 
 Under `net_mode = allowlist` the toolchain allows Docker Hub, `ghcr.io` and
 `quay.io`; company registries go into `net_allow` like any other host. The
@@ -111,6 +112,9 @@ three restriction axes.
   the file records where it came from and when. The appended rule is
   generated from a list in `toolchain.rs`, so a second toolchain can add
   syscalls without a second profile file.
+* Within one session, a test JVM killed with `kill -9` leaves its containers
+  running and counting against the pids limit; `docker ps` / `docker rm` as
+  usual.
 * `cargo test` guards: `newuidmap`/`newgidmap` are the only setuid files
   (build-time check in the layer, tested through the Dockerfile text), the
   generated profile parses and keeps Docker's `defaultAction`, and the run
