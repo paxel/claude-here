@@ -15,3 +15,16 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+  # The real-image checks: the base and toolchain layers build on the
+  # runner's daemon, the entrypoint runs, rootless podman starts inside the
+  # sandbox (ADR 0010) and a mounted CA lands in the bundle (ADR 0009).
+  integration:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: docker version && uname -r
+      - run: sysctl kernel.apparmor_restrict_unprivileged_userns || true
+      - run: cargo test --test integration -- --ignored --test-threads=1 docker_toolchain ca_is
