@@ -558,7 +558,7 @@ mod tests {
         let rw = PathRewriter::new(&home, "ni");
 
         let granted = sync_mcp_servers(&paths, &dest, &rw, &[])?;
-        assert!(granted.is_empty());
+        assert_eq!(granted, Vec::<String>::new());
         assert!(read_json_object(&dest).get("mcpServers").is_none());
 
         let granted = sync_mcp_servers(&paths, &dest, &rw, &["x".into(), "nope".into()])?;

@@ -312,7 +312,7 @@ mod tests {
             Install::Tarball
         );
         for m in [Install::Cargo, Install::Brew, Install::Tarball] {
-            assert!(!m.hint().is_empty());
+            assert_ne!(m.hint(), "");
         }
     }
 

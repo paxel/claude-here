@@ -535,7 +535,7 @@ mod tests {
     fn defaults_apply() {
         let c: Config = ConfigFile::default().into();
         assert_eq!(c.image, None);
-        assert!(c.toolchains.is_empty());
+        assert_eq!(c.toolchains, Vec::<String>::new());
         assert_eq!(c.user, "ni");
         assert_eq!(c.git_mode, GitMode::Ro);
         assert_eq!(c.cloud_mode, CloudMode::None);
@@ -544,7 +544,7 @@ mod tests {
         assert!(c.update_check);
         assert_eq!(c.net_retention_days, 90);
         assert!(!c.ssh && !c.gh);
-        assert!(c.mcp.is_empty());
+        assert_eq!(c.mcp, Vec::<String>::new());
         assert_eq!(c.truststore_password, "changeit");
         assert_eq!(c.ca, None);
     }
@@ -626,7 +626,7 @@ isolated = true
             .unwrap_or_default()
             .into();
         assert_eq!(c.image, None);
-        assert!(c.toolchains.is_empty());
+        assert_eq!(c.toolchains, Vec::<String>::new());
         assert_eq!(c.legacy_notes.len(), 1);
 
         // A custom image keeps its meaning and produces no note.
@@ -634,7 +634,7 @@ isolated = true
             .unwrap_or_default()
             .into();
         assert_eq!(c.image.as_deref(), Some("my/dev:latest"));
-        assert!(c.legacy_notes.is_empty());
+        assert_eq!(c.legacy_notes, Vec::<String>::new());
     }
 
     #[test]
