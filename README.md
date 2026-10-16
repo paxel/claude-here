@@ -488,7 +488,7 @@ Every session also prints one line at exit
 `CLAUDE_HERE_SESSION_INFO` is exported inside the container:
 
 ```json
-{"tool":"claude_here","version":"0.2.0","session_id":"20260919-095014-8865",
+{"tool":"claude_here","version":"0.3.0","session_id":"20260919-095014-8865",
  "image":"claude_here:base-u1000-claude","toolchains":[],"mcp":[],"git_mode":"ro","cloud_mode":"none","net_mode":"full","yolo":false,"user":"ni",
  "cwd_host":"/home/axel/src/foo","cwd":"/home/ni/src/foo",
  "mounts":[{"host":"/home/axel/src/foo","container":"/home/ni/src/foo","mode":"rw"},
