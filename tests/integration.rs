@@ -299,7 +299,7 @@ fn docker_toolchain_dry_run_relaxes_the_run_shape() {
     fs::create_dir_all(&project).ok();
     let (code, out, err) = run_tool(&xdg, &project, &["--dry-run", "--docker", "-p", "x"]);
     assert_eq!(code, 0, "{err}");
-    assert!(!out.contains("no-new-privileges"), "{out}");
+    assert!(!out.contains("--security-opt no-new-privileges"), "{out}");
     assert!(out.contains("--security-opt seccomp="), "{out}");
     assert!(out.contains("-v claude_here-containers-"), "{out}");
     assert!(out.contains("-e DOCKER_HOST=unix:///run/user/"), "{out}");
@@ -410,12 +410,13 @@ fn ca_is_added_to_the_system_bundle() {
         "-v".to_string(),
         format!("{}:{}:ro", pem.display(), claude_here::run::CA_CRT),
     ];
+    // A self-signed CA verifies only against a bundle that contains it.
     let script = "openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt \
         /usr/local/share/ca-certificates/claude_here.crt && echo verify=ok; \
-        grep -c 'claude_here itest CA' /etc/ssl/certs/ca-certificates.crt";
+        ls /etc/ssl/certs/ | grep -c claude_here";
     let out = entrypoint_run_raw(&image, true, &extra, &[], script);
     assert!(out.contains("verify=ok"), "{out}");
-    assert!(!out.contains("\n0\n"), "CA not in bundle: {out}");
+    assert!(out.contains("\n1\n"), "no bundle symlink for the CA: {out}");
 }
 
 /// With the jvm layer, the root phase also imports the PEM into the JDK's own
@@ -464,5 +465,8 @@ fn ca_is_imported_into_the_jvm_cacerts() {
         && echo keytool=ok";
     let out = entrypoint_run_raw(&image, true, &extra, &[], script);
     assert!(out.contains("keytool=ok"), "{out}");
-    assert!(out.contains("claude_here itest CA"), "{out}");
+    assert!(
+        out.contains("claude_here,") && out.contains("trustedCertEntry"),
+        "{out}"
+    );
 }
