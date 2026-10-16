@@ -22,6 +22,12 @@ pub const NET_OUT_DIR: &str = "/var/log/claude_here_out";
 pub const NET_VIEW_DIR: &str = ".claude_here/net";
 /// Container-side path of a forwarded ssh agent socket.
 pub const SSH_AGENT_PATH: &str = "/run/claude_here/ssh-agent";
+/// Where `[tls] ca` is mounted: the directory `update-ca-certificates` scans
+/// in the root phase (ADR 0009).
+pub const CA_CRT: &str = "/usr/local/share/ca-certificates/claude_here.crt";
+/// The merged system bundle after `update-ca-certificates`: company CA plus
+/// the public roots. Clients that ignore the bundle are pointed here.
+pub const CA_BUNDLE: &str = "/etc/ssl/certs/ca-certificates.crt";
 
 /// Facts about the host gathered before assembly (kept separate for tests).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,6 +208,7 @@ pub fn assemble(
         &mut warnings,
     );
     add_truststore(cfg, paths, &chome, &mut mounts, &mut env);
+    add_ca(cfg, paths, &mut mounts, &mut env);
 
     let (ssh, gh) = add_ssh_gh(cfg, facts, &chome, &mut mounts, &mut env, &mut warnings);
     add_cloud_credentials(
@@ -405,6 +412,35 @@ fn add_truststore(
         ),
     ));
 }
+
+/// `[tls] ca` → read-only mount into the system CA directory, and the
+/// variables of the clients that do not read the system bundle (ADR 0009).
+/// OpenSSL, Go, Dart, cargo and podman need nothing. `SSL_CERT_FILE` is not
+/// set: it would replace the bundle instead of extending it.
+fn add_ca(
+    cfg: &Config,
+    paths: &HostPaths,
+    mounts: &mut Vec<Mount>,
+    env: &mut Vec<(String, String)>,
+) {
+    let Some(ca) = &cfg.ca else { return };
+    mounts.push(Mount::ro(paths.expand_tilde(ca), CA_CRT));
+    for (k, v) in CA_ENV {
+        env.push(((*k).to_string(), (*v).to_string()));
+    }
+}
+
+/// Clients with their own root store, and what points them at the company CA.
+/// Node appends the PEM to its roots; the Python family, `aws` and `gcloud`
+/// take a whole bundle; `uv` ships webpki roots and is told to use native TLS.
+pub const CA_ENV: &[(&str, &str)] = &[
+    ("NODE_EXTRA_CA_CERTS", CA_CRT),
+    ("REQUESTS_CA_BUNDLE", CA_BUNDLE),
+    ("PIP_CERT", CA_BUNDLE),
+    ("UV_NATIVE_TLS", "1"),
+    ("AWS_CA_BUNDLE", CA_BUNDLE),
+    ("CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE", CA_BUNDLE),
+];
 
 /// Fixed session variables plus the configured `env` entries; returns the
 /// names to pass through from the host.
@@ -1001,7 +1037,7 @@ mod tests {
             ],
             tls: crate::config::TlsFile {
                 truststore: Some("~/certs/cacerts".into()),
-                truststore_password: None,
+                ..Default::default()
             },
             caches: crate::config::CachesFile {
                 m2_exclude: Some(vec!["settings.xml".into()]),
@@ -1020,10 +1056,46 @@ mod tests {
         assert!(s.contains("-v /home/axel/.gradle:/home/ni/.gradle "));
         assert!(s.contains("-v /home/axel/certs/cacerts:/home/ni/.claude_here/cacerts:ro"));
         assert!(s.contains("-e JAVA_TOOL_OPTIONS=-Djavax.net.ssl.trustStore=/home/ni/.claude_here/cacerts -Djavax.net.ssl.trustStorePassword=changeit"));
+        assert!(!s.contains(CA_CRT));
+        assert!(!s.contains("NODE_EXTRA_CA_CERTS"));
         assert!(!a.info.net_capture);
         assert!(s.contains("-e CH_NET_CAPTURE=0"));
         assert!(!s.contains(NET_OUT_DIR));
         assert!(s.contains("--network host claude_here:base"));
+        Ok(())
+    }
+
+    #[test]
+    fn ca_is_mounted_and_every_non_bundle_client_is_pointed_at_it() -> Result<()> {
+        let c = cfg(ConfigFile {
+            tls: crate::config::TlsFile {
+                ca: Some("~/company/ca.pem".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let a = assemble(&c, &paths(), &facts(), &git(), &req())?;
+        let s = a.spec.to_args().join(" ");
+        assert!(s.contains(
+            "-v /home/axel/company/ca.pem:/usr/local/share/ca-certificates/claude_here.crt:ro"
+        ));
+        assert!(
+            s.contains("-e NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/claude_here.crt")
+        );
+        assert!(s.contains("-e REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt"));
+        assert!(s.contains("-e PIP_CERT=/etc/ssl/certs/ca-certificates.crt"));
+        assert!(s.contains("-e UV_NATIVE_TLS=1"));
+        assert!(s.contains("-e AWS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt"));
+        assert!(
+            s.contains("-e CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE=/etc/ssl/certs/ca-certificates.crt")
+        );
+        // Never the PEM alone for a bundle reader: it would lose the public roots.
+        for (k, v) in CA_ENV {
+            if *k != "NODE_EXTRA_CA_CERTS" && *k != "UV_NATIVE_TLS" {
+                assert_eq!(*v, CA_BUNDLE, "{k}");
+            }
+        }
+        assert!(!s.contains("SSL_CERT_FILE"));
         Ok(())
     }
 

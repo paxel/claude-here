@@ -3,7 +3,7 @@
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::config::{CloudMode, ConfigFile, GitMode, MountMode, MountSpec, NetMode};
+use crate::config::{CloudMode, ConfigFile, GitMode, MountMode, MountSpec, NetMode, TlsFile};
 
 /// Subcommand names recognized when given as the first argument.
 pub const SUBCOMMANDS: &[&str] = &[
@@ -154,6 +154,9 @@ pub struct RunFlags {
     /// Raw docker run argument, appended before the image. Repeatable.
     #[arg(long = "docker-arg", value_name = "ARG", allow_hyphen_values = true)]
     pub docker_arg: Vec<String>,
+    /// Company CA (PEM) trusted by every client in the container.
+    #[arg(long, value_name = "PATH")]
+    pub ca: Option<String>,
     /// Container memory limit, e.g. 8g.
     #[arg(long, value_name = "SIZE")]
     pub memory: Option<String>,
@@ -218,6 +221,10 @@ impl RunFlags {
             env,
             docker_args: self.docker_arg.clone(),
             mounts,
+            tls: TlsFile {
+                ca: self.ca.clone(),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -409,6 +416,7 @@ const VALUE_FLAGS: &[&str] = &[
     "--net-allow",
     "--mcp",
     "--docker-arg",
+    "--ca",
     "--memory",
     "--cpus",
 ];
@@ -599,8 +607,12 @@ mod tests {
             "example.com",
             "--mcp",
             "github",
+            "--ca",
+            "~/company/ca.pem",
         ]));
         let layer = parse(s.tool).as_config_layer();
+        assert_eq!(layer.tls.ca.as_deref(), Some("~/company/ca.pem"));
+        assert_eq!(layer.tls.truststore, None);
         assert_eq!(layer.mounts.len(), 2);
         assert_eq!(layer.mounts[0].path, "~/a");
         assert_eq!(layer.mounts[0].mode, MountMode::Ro);

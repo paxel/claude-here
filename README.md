@@ -214,6 +214,7 @@ RUN npm install -g @anthropic-ai/mcp-inspector
 | `--git ro\|commit\|full` | Git mode (see below). Default `ro` |
 | `--ssh`, `--gh` | Forward ssh agent / hand the host's `gh auth token` to the container as `GH_TOKEN` (per-run 0600 env-file, never on the command line). `full` mode only |
 | `--docker-arg ARG` | Raw `docker run` argument. Repeatable |
+| `--ca PATH` | Company CA (PEM) trusted by every client in the container (see Configuration) |
 | `--memory 8g`, `--cpus 4` | Resource limits (none by default) |
 | `--no-net-log` | Skip network capture for this run |
 | `--rebuild`, `--no-build` | Force image rebuild / fail instead of building |
@@ -304,8 +305,21 @@ isolated = false          # true: private caches under ~/.config/claude_here/cac
 m2_exclude = ["settings.xml"]
 
 [tls]
-truststore = "~/certs/cacerts"   # wired into JAVA_TOOL_OPTIONS
+ca = "~/company/ca.pem"          # company CA, see below
+truststore = "~/certs/cacerts"   # pre-built JKS/PKCS12 for the JVM, wired into JAVA_TOOL_OPTIONS
 ```
+
+Behind a corporate proxy or against a private registry, `[tls] ca` (or `--ca`)
+is the one line that makes TLS work everywhere inside: the PEM — one
+certificate or a chain — is added to the system bundle at session start, and
+the clients that keep their own root store are pointed at it (Node and Claude
+Code itself via `NODE_EXTRA_CA_CERTS`, `pip`/`requests`/`az` via
+`REQUESTS_CA_BUNDLE` and `PIP_CERT`, `uv` via `UV_NATIVE_TLS`, `aws` and
+`gcloud` via their bundle variables, the JDK via `keytool` into its `cacerts`).
+`curl`, `git`, `cargo`, Go tools, Dart and `podman` read the system bundle and
+need nothing. `truststore` remains for a pre-built JKS with more in it than one
+CA; when both are set it wins for the JVM. Nothing is intercepted: the CA is
+yours, for your network (ADR 0009).
 
 ```sh
 claude_here config show                       # merged file view + effective values

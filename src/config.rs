@@ -212,6 +212,9 @@ pub struct TlsFile {
     /// JKS/PKCS12 trust store mounted read-only and wired via `JAVA_TOOL_OPTIONS`.
     pub truststore: Option<String>,
     pub truststore_password: Option<String>,
+    /// PEM file (one certificate or a chain) added to the system bundle and
+    /// handed to every client that ignores it (ADR 0009).
+    pub ca: Option<String>,
 }
 
 /// On-disk representation. Every field optional so layers can be merged.
@@ -331,7 +334,7 @@ impl ConfigFile {
             m2_exclude,
             gradle_exclude
         );
-        take_sub!(tls: truststore, truststore_password);
+        take_sub!(tls: truststore, truststore_password, ca);
         self
     }
 }
@@ -365,6 +368,8 @@ pub struct Config {
     pub gradle_exclude: Vec<String>,
     pub truststore: Option<String>,
     pub truststore_password: String,
+    /// Company CA in PEM form (ADR 0009).
+    pub ca: Option<String>,
     /// Notes about superseded configuration keys that were translated.
     pub legacy_notes: Vec<String>,
 }
@@ -433,6 +438,7 @@ impl From<ConfigFile> for Config {
                 .tls
                 .truststore_password
                 .unwrap_or_else(|| "changeit".to_string()),
+            ca: f.tls.ca,
             legacy_notes,
         }
     }
@@ -540,6 +546,22 @@ mod tests {
         assert!(!c.ssh && !c.gh);
         assert!(c.mcp.is_empty());
         assert_eq!(c.truststore_password, "changeit");
+        assert_eq!(c.ca, None);
+    }
+
+    #[test]
+    fn tls_ca_parses_and_project_overrides_global() {
+        let global: ConfigFile = toml::from_str("[tls]\nca = \"~/g.pem\"\n").unwrap_or_default();
+        let project: ConfigFile = toml::from_str("[tls]\nca = \"~/p.pem\"\n").unwrap_or_default();
+        assert_eq!(global.tls.ca.as_deref(), Some("~/g.pem"));
+        let layers = Layers {
+            global_path: "/g".into(),
+            project_path: "/p".into(),
+            global,
+            project,
+        };
+        let c = layers.resolve(ConfigFile::default());
+        assert_eq!(c.ca.as_deref(), Some("~/p.pem"));
     }
 
     #[test]

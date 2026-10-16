@@ -31,6 +31,19 @@ printf '%s\n' "${CH_CLOUD_MODE}" > /etc/claude_here/cloud_mode
 printf '%s\n' "${CH_NET_MODE}" > /etc/claude_here/net_mode
 chmod 644 /etc/claude_here/git_mode /etc/claude_here/cloud_mode /etc/claude_here/net_mode
 
+# Company CA (ADR 0009): extend the system bundle, and the JDK's own store
+# when the jvm toolchain is present. Both land in the writable overlay only.
+CA_CRT=/usr/local/share/ca-certificates/claude_here.crt
+if [ -f "${CA_CRT}" ]; then
+  update-ca-certificates >/dev/null 2>&1 ||
+    echo "claude_here: warning: update-ca-certificates failed; the company CA is not trusted" >&2
+  if [ -x /opt/graalvm/bin/keytool ]; then
+    /opt/graalvm/bin/keytool -importcert -noprompt -cacerts -storepass changeit \
+      -alias claude_here -file "${CA_CRT}" >/dev/null 2>&1 ||
+      echo "claude_here: warning: keytool import failed; the JVM does not trust the company CA" >&2
+  fi
+fi
+
 # Egress allowlist before anything else runs, so nothing slips out first.
 if [ "${CH_NET_MODE}" = "allowlist" ]; then
   /usr/local/lib/claude_here/net-allowlist.sh "${CH_NET_ALLOW}"

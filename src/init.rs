@@ -58,7 +58,8 @@ pub const CONFIG_TEMPLATE: &str = "\
 # gradle_exclude = [\"gradle.properties\"]
 #
 # [tls]
-# truststore = \"~/certs/cacerts\"
+# ca = \"~/company/ca.pem\"          # company CA, trusted by every client in the container
+# truststore = \"~/certs/cacerts\"   # pre-built JKS/PKCS12 for the JVM instead
 # truststore_password = \"changeit\"
 ";
 
