@@ -417,3 +417,52 @@ fn ca_is_added_to_the_system_bundle() {
     assert!(out.contains("verify=ok"), "{out}");
     assert!(!out.contains("\n0\n"), "CA not in bundle: {out}");
 }
+
+/// With the jvm layer, the root phase also imports the PEM into the JDK's own
+/// `cacerts`, so Maven and Gradle trust it without `JAVA_TOOL_OPTIONS`.
+#[test]
+#[ignore = "needs docker and the jvm layer (long build)"]
+fn ca_is_imported_into_the_jvm_cacerts() {
+    let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+    let xdg = config_root(tmp.path());
+    let project = tmp.path().join("proj");
+    fs::create_dir_all(&project).ok();
+    let (code, _, err) = run_tool(&xdg, &project, &["build", "-t", "jvm"]);
+    assert_eq!(code, 0, "build failed: {err}");
+    let pem = tmp.path().join("ca.pem");
+    let key = tmp.path().join("ca.key");
+    let made = Command::new("openssl")
+        .args([
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "1",
+            "-subj",
+            "/CN=claude_here itest CA",
+        ])
+        .arg("-keyout")
+        .arg(&key)
+        .arg("-out")
+        .arg(&pem)
+        .output()
+        .unwrap_or_else(|e| panic!("openssl: {e}"));
+    assert!(
+        made.status.success(),
+        "{}",
+        String::from_utf8_lossy(&made.stderr)
+    );
+    let uid = users_uid();
+    let image = claude_here::image::chain_tag(uid.0, &["jvm".to_string()]);
+    let extra = vec![
+        "-v".to_string(),
+        format!("{}:{}:ro", pem.display(), claude_here::run::CA_CRT),
+    ];
+    let script = "keytool -list -cacerts -storepass changeit -alias claude_here \
+        && echo keytool=ok";
+    let out = entrypoint_run_raw(&image, true, &extra, &[], script);
+    assert!(out.contains("keytool=ok"), "{out}");
+    assert!(out.contains("claude_here itest CA"), "{out}");
+}
