@@ -143,6 +143,7 @@ claude_here --dart --android              # Flutter + Dart, Android SDK (implies
 claude_here --python                      # poetry/ruff/mypy/pyright (implies --node and --uv)
 claude_here --docs                        # plantuml, d2, typst, pandoc
 claude_here --k8s --terraform --cloud ro  # cluster and IaC tooling, read verbs only
+claude_here --jvm --docker                # rootless podman inside: testcontainers, docker build/run
 claude_here toolchains                    # what is available
 claude_here --rust --docs --save          # remember for this project (.claude_here/config.toml)
 claude_here config set toolchains '["rust"]' --global   # every project gets rust
@@ -204,7 +205,7 @@ RUN npm install -g @anthropic-ai/mcp-inspector
 
 | Flag | Meaning |
 |------|---------|
-| `--rust`, `--jvm`, `--dart`, `--node`, `--python`, `--go`, `--cpp`, `--uv`, `--android`, `--docs`, `--k8s`, `--terraform`, `--aws`, `--gcloud`, `--azure` | Enable a toolchain; any combination. `-t NAME` does the same. `claude_here toolchains` lists them |
+| `--rust`, `--jvm`, `--dart`, `--node`, `--python`, `--go`, `--cpp`, `--uv`, `--android`, `--docs`, `--k8s`, `--terraform`, `--aws`, `--gcloud`, `--azure`, `--docker` | Enable a toolchain; any combination. `-t NAME` does the same. `claude_here toolchains` lists them |
 | `--image NAME` | Run a custom local image instead of the toolchain chain (must have `claude` in `PATH`) |
 | `--cloud none\|ro\|full` | Cloud mode (see below). Default `none` |
 | `--net full\|allowlist` | Network mode. Default `full` |
@@ -378,6 +379,7 @@ in `.claude_here/config.toml` once.
 | `aws` | AWS CLI v2 | — |
 | `gcloud` | Google Cloud CLI (~1GB) | — |
 | `azure` (`az`) | Azure CLI | — |
+| `docker` (`podman`) | rootless podman, `docker` CLI shim, Docker API socket — nested containers, testcontainers (see below) | named volume per project |
 
 The base image holds Debian trixie slim, git,
 gh, curl, ripgrep, fd, jq, graphviz, python3 + pip/venv, build-essential,
@@ -425,6 +427,41 @@ claude_here --mcp github
 The servers granted for a run are printed in the startup line and listed in
 `CLAUDE_HERE_SESSION_INFO`. An MCP server can grant reach that no shim here can
 restrict — that is why it takes an explicit grant.
+
+### Containers inside the sandbox
+
+`--docker` puts rootless podman in the image and starts its Docker API socket
+at session start, so `docker build`, `docker run`, `docker compose` (as
+`podman compose`) and testcontainers work as they do on a workstation —
+`DOCKER_HOST` is set, Ryuk is on. Nothing reaches a host docker daemon: the
+nested containers run as the sandbox user inside a user namespace, share the
+sandbox's egress allowlist, network capture, pids and memory limits, and an
+escape from one of them lands in the sandbox, not on the host. `--privileged`
+exists but grants nothing beyond the user namespace, host paths and the
+host's images are out of reach, and the host socket is never mounted — that
+would be root on the host (ADR 0010).
+
+Two things are relaxed while the toolchain is on, both stated in the system
+prompt: `no-new-privileges` is dropped, because mapping the uids of a
+multi-user image (`postgres` switching to its own user) goes through the
+setuid helpers `newuidmap`/`newgidmap` — the layer strips the setuid bit from
+every other file and fails to build otherwise — and Docker's default seccomp
+profile is replaced by the same profile plus the namespace and mount syscalls
+rootless podman needs (`unshare`, `mount`, `pivot_root`, `setns`…), still
+without `CAP_SYS_ADMIN`. Capabilities, pids limit and the three restriction
+axes are unchanged.
+
+Images and layers of the nested containers live in a named docker volume per
+project (`claude_here-containers-<sha8>`), so pulls happen once per project
+and work the same on Linux and Docker Desktop. `claude_here volumes` lists
+them, `claude_here volumes --rm` removes this project's, `--rm --all` every
+project's; `uninstall` removes them with the images. Two sessions of one
+project cannot use the volume at the same time.
+
+Needs kernel 5.11 or newer on the host (or in the Docker Desktop VM) for
+overlay in a user namespace; the session refuses to start otherwise. Under
+`--net allowlist` the toolchain allows Docker Hub, `ghcr.io` and `quay.io`;
+a company registry goes into `net_allow` and its CA into `[tls] ca`.
 
 ### Network modes
 

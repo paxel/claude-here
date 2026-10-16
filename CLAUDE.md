@@ -7,7 +7,8 @@ locked design decisions before proposing structural changes.
 ## Layout
 
 * `src/cli.rs` — clap definitions and the tool-vs-claude argument splitter.
-* `src/toolchain.rs` — the shipped toolchain registry: order, implications, caches, egress domains, language servers, credentials.
+* `src/toolchain.rs` — the shipped toolchain registry: order, implications, caches, egress domains, language servers, credentials, run-shape needs (`RunNeeds`, used by `docker`).
+* `src/seccomp.rs` — Docker's default seccomp profile (`images/seccomp-default.json`, verbatim) plus the syscalls a toolchain needs.
 * `src/plugin.rs` — generates the bundled plugin (skills + `lspServers`) handed to the container.
 * `src/config.rs` — TOML layers (global < project < CLI), resolved `Config`.
 * `src/run.rs` — pure `assemble()` from config + host facts to `RunSpec`; `execute()`.
@@ -15,7 +16,7 @@ locked design decisions before proposing structural changes.
 * `src/image.rs` — image chain, hash labels, user/project layers.
 * `src/git.rs` — discovery of `.git` dirs to protect in `ro` mode.
 * `src/net/` — session files, summaries, reports.
-* `images/` — `Dockerfile.base`, `toolchains/<name>.dockerfile`, `entrypoint.sh`, `git-shim.sh`, `cloud-shim.sh`, `net-allowlist.sh`, `net-summary.sh`, `skills/` (all embedded with `include_str!`).
+* `images/` — `Dockerfile.base`, `toolchains/<name>.dockerfile`, `entrypoint.sh`, `git-shim.sh`, `cloud-shim.sh`, `net-allowlist.sh`, `net-summary.sh`, `seccomp-default.json`, `skills/` (all embedded with `include_str!`).
 
 ## Rules
 
