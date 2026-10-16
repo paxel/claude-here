@@ -236,3 +236,184 @@ fn sandbox_user_cannot_stop_capture_and_summary_is_written() {
     assert!(summary.contains("GET http://example.com/"), "{summary}");
     assert!(out_dir.join("cap.pcap").exists());
 }
+
+/// Run `script` through the entrypoint of `image` with the hardened base
+/// flags, plus whatever `extra` adds (or removes: `no_new_privileges` off
+/// for the docker toolchain, ADR 0010).
+fn entrypoint_run_raw(
+    image: &str,
+    no_new_privileges: bool,
+    extra: &[String],
+    env: &[(&str, String)],
+    script: &str,
+) -> String {
+    let uid = users_uid();
+    let mut args: Vec<String> = ["run", "--rm", "--init", "--cap-drop", "ALL"]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    for cap in claude_here::docker::CAPS {
+        args.extend(["--cap-add".to_string(), (*cap).to_string()]);
+    }
+    if no_new_privileges {
+        args.extend([
+            "--security-opt".to_string(),
+            "no-new-privileges".to_string(),
+        ]);
+    }
+    args.extend(["--pids-limit".to_string(), "4096".to_string()]);
+    args.extend(extra.iter().cloned());
+    for (k, v) in [
+        ("CH_USER", "ni".to_string()),
+        ("CH_UID", uid.0.to_string()),
+        ("CH_GID", uid.1.to_string()),
+        ("CH_SESSION_ID", "itest".to_string()),
+        ("CH_GIT_MODE", "ro".to_string()),
+        ("CH_NET_CAPTURE", "0".to_string()),
+    ] {
+        args.extend(["-e".to_string(), format!("{k}={v}")]);
+    }
+    for (k, v) in env {
+        args.extend(["-e".to_string(), format!("{k}={v}")]);
+    }
+    args.extend([image.to_string(), "bash".into(), "-c".into(), script.into()]);
+    let out = Command::new("docker")
+        .args(&args)
+        .output()
+        .unwrap_or_else(|e| panic!("docker: {e}"));
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+/// The real binary, `--docker`: no `no-new-privileges`, the generated seccomp
+/// profile, the per-project volume and the socket environment (ADR 0010).
+#[test]
+#[ignore = "needs docker"]
+fn docker_toolchain_dry_run_relaxes_the_run_shape() {
+    let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+    let xdg = config_root(tmp.path());
+    let project = tmp.path().join("proj");
+    fs::create_dir_all(&project).ok();
+    let (code, out, err) = run_tool(&xdg, &project, &["--dry-run", "--docker", "-p", "x"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(!out.contains("no-new-privileges"), "{out}");
+    assert!(out.contains("--security-opt seccomp="), "{out}");
+    assert!(out.contains("-v claude_here-containers-"), "{out}");
+    assert!(out.contains("-e DOCKER_HOST=unix:///run/user/"), "{out}");
+    assert!(
+        out.contains("-e TESTCONTAINERS_RYUK_DISABLED=true"),
+        "{out}"
+    );
+    assert!(out.contains("-docker-claude "), "{out}");
+    let profile = xdg.join("claude_here").join("seccomp.json");
+    assert!(
+        profile.exists(),
+        "profile not written at {}",
+        profile.display()
+    );
+}
+
+/// The docker layer builds (its setuid check passes), the entrypoint brings
+/// up the podman socket, and a nested container runs — including one that
+/// switches uid, which is what `no-new-privileges` had to go for.
+#[test]
+#[ignore = "needs docker and network"]
+fn docker_toolchain_runs_a_nested_container() {
+    let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+    let xdg = config_root(tmp.path());
+    let project = tmp.path().join("proj");
+    fs::create_dir_all(&project).ok();
+    let (code, _, err) = run_tool(&xdg, &project, &["build", "-t", "docker"]);
+    assert_eq!(code, 0, "build failed: {err}");
+    let uid = users_uid();
+    let image = claude_here::image::chain_tag(uid.0, &["docker".to_string()]);
+    let profile = tmp.path().join("seccomp.json");
+    let text = claude_here::seccomp::profile(claude_here::toolchain::PODMAN_SYSCALLS)
+        .unwrap_or_else(|e| panic!("{e}"));
+    fs::write(&profile, text).unwrap_or_else(|e| panic!("{e}"));
+    let volume = "claude_here-containers-itest".to_string();
+    let runtime = format!("/run/user/{}", uid.0);
+    let extra = vec![
+        "--security-opt".to_string(),
+        format!("seccomp={}", profile.display()),
+        "-v".to_string(),
+        format!("{volume}:/home/ni/.local/share/containers/storage"),
+    ];
+    let env = [
+        ("CH_CONTAINERS", "1".to_string()),
+        ("XDG_RUNTIME_DIR", runtime.clone()),
+        (
+            "DOCKER_HOST",
+            format!("unix://{runtime}/podman/podman.sock"),
+        ),
+    ];
+    let script = "test -S \"${XDG_RUNTIME_DIR}/podman/podman.sock\" && echo sock=ok; \
+        docker info >/dev/null 2>&1 && echo info=ok; \
+        docker run --rm docker.io/library/alpine:3.20 sh -c 'echo nested=ok'; \
+        echo user=$(docker run --rm --user 1 docker.io/library/alpine:3.20 id -u); \
+        ls -l /usr/bin/newuidmap | cut -c1-10";
+    let out = entrypoint_run_raw(&image, false, &extra, &env, script);
+    Command::new("docker")
+        .args(["volume", "rm", "-f", &volume])
+        .output()
+        .ok();
+    assert!(out.contains("sock=ok"), "{out}");
+    assert!(out.contains("info=ok"), "{out}");
+    assert!(out.contains("nested=ok"), "{out}");
+    assert!(out.contains("user=1"), "{out}");
+    assert!(
+        out.contains("-rwsr-xr-x"),
+        "newuidmap must stay setuid: {out}"
+    );
+}
+
+/// A mounted PEM ends up in the system bundle at session start (ADR 0009).
+#[test]
+#[ignore = "needs docker"]
+fn ca_is_added_to_the_system_bundle() {
+    let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+    let xdg = config_root(tmp.path());
+    let project = tmp.path().join("proj");
+    fs::create_dir_all(&project).ok();
+    ensure_base(&xdg, &project);
+    let pem = tmp.path().join("ca.pem");
+    let key = tmp.path().join("ca.key");
+    let made = Command::new("openssl")
+        .args([
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "1",
+            "-subj",
+            "/CN=claude_here itest CA",
+        ])
+        .arg("-keyout")
+        .arg(&key)
+        .arg("-out")
+        .arg(&pem)
+        .output()
+        .unwrap_or_else(|e| panic!("openssl: {e}"));
+    assert!(
+        made.status.success(),
+        "{}",
+        String::from_utf8_lossy(&made.stderr)
+    );
+    let uid = users_uid();
+    let image = claude_here::image::base_tag(&uid.0);
+    let extra = vec![
+        "-v".to_string(),
+        format!("{}:{}:ro", pem.display(), claude_here::run::CA_CRT),
+    ];
+    let script = "openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt \
+        /usr/local/share/ca-certificates/claude_here.crt && echo verify=ok; \
+        grep -c 'claude_here itest CA' /etc/ssl/certs/ca-certificates.crt";
+    let out = entrypoint_run_raw(&image, true, &extra, &[], script);
+    assert!(out.contains("verify=ok"), "{out}");
+    assert!(!out.contains("\n0\n"), "CA not in bundle: {out}");
+}
