@@ -733,6 +733,31 @@ mod tests {
         );
     }
 
+    /// The layer creates `~/.local/share`, which the base does not have; the
+    /// claude layer later writes there as the sandbox user, so every created
+    /// directory must be owned by that user, not left root-owned by `mkdir -p`.
+    #[test]
+    fn docker_layer_owns_every_home_directory_it_creates() {
+        let d = find("docker").map_or("", |t| t.dockerfile);
+        assert!(!d.contains("mkdir -p \"/home/${CH_USER}"));
+        let owned = d
+            .lines()
+            .skip_while(|l| !l.contains("install -d -o \"${CH_USER}\""))
+            .skip(1)
+            .map(str::trim)
+            .take_while(|l| l.starts_with("\"/home/${CH_USER}/"))
+            .map(|l| l.trim_end_matches(" \\"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            owned,
+            vec![
+                "\"/home/${CH_USER}/.local/share\"",
+                "\"/home/${CH_USER}/.local/share/containers\"",
+                "\"/home/${CH_USER}/.local/share/containers/storage\"",
+            ]
+        );
+    }
+
     #[test]
     fn domains_include_base_and_toolchain_hosts() {
         let chain = resolve(&["rust".to_string()]).unwrap_or_default();

@@ -30,9 +30,12 @@ RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) \
 # rootless run uses its own defaults under $XDG_RUNTIME_DIR and ~/.local/share.
 # cgroupfs: there is no systemd in the sandbox. The rootless storage root is a
 # named volume (an overlay upper cannot sit on the sandbox's own overlay).
+# Every directory created under the home is handed to the sandbox user,
+# `.local/share` included: the claude layer writes there as that user.
 RUN printf '[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\n[containers]\nnetns = "pasta"\n' \
       > /etc/containers/containers.conf \
- && mkdir -p "/home/${CH_USER}/.local/share/containers/storage" \
- && chown "${CH_USER}:" "/home/${CH_USER}/.local/share/containers" \
-                        "/home/${CH_USER}/.local/share/containers/storage" \
+ && install -d -o "${CH_USER}" -g "$(id -g "${CH_USER}")" \
+      "/home/${CH_USER}/.local/share" \
+      "/home/${CH_USER}/.local/share/containers" \
+      "/home/${CH_USER}/.local/share/containers/storage" \
  && podman --version && docker --version
