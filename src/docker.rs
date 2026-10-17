@@ -77,6 +77,10 @@ pub struct RunSpec {
     /// Keep `--security-opt no-new-privileges` off: a toolchain needs setuid
     /// helpers (ADR 0010). The default, `false`, sets it.
     pub allow_new_privileges: bool,
+    /// `--security-opt apparmor=unconfined`: Docker's default profile denies
+    /// `mount`, which rootless podman needs (ADR 0010). The daemon ignores
+    /// the option on hosts without AppArmor.
+    pub apparmor_unconfined: bool,
     /// Custom seccomp profile file instead of Docker's default.
     pub seccomp: Option<PathBuf>,
     /// Named volumes `(name, container path)`.
@@ -106,6 +110,9 @@ impl RunSpec {
         }
         if !self.allow_new_privileges {
             a.extend(["--security-opt".into(), "no-new-privileges".into()]);
+        }
+        if self.apparmor_unconfined {
+            a.extend(["--security-opt".into(), "apparmor=unconfined".into()]);
         }
         if let Some(p) = &self.seccomp {
             a.extend(["--security-opt".into(), format!("seccomp={}", p.display())]);
@@ -150,6 +157,7 @@ mod run_shape_tests {
         let spec = RunSpec {
             image: "claude_here:base-docker".into(),
             allow_new_privileges: true,
+            apparmor_unconfined: true,
             seccomp: Some("/home/axel/.config/claude_here/seccomp.json".into()),
             volumes: vec![(
                 "claude_here-containers-abcd1234".into(),
@@ -159,6 +167,7 @@ mod run_shape_tests {
         };
         let s = spec.to_args().join(" ");
         assert!(!s.contains("no-new-privileges"));
+        assert!(s.contains("--security-opt apparmor=unconfined"));
         assert!(s.contains("--security-opt seccomp=/home/axel/.config/claude_here/seccomp.json"));
         assert!(s.contains(
             "-v claude_here-containers-abcd1234:/home/ni/.local/share/containers/storage "
@@ -340,6 +349,7 @@ mod tests {
             extra_caps: vec!["NET_ADMIN".into()],
             extra_args: vec!["--network".into(), "mynet".into()],
             allow_new_privileges: false,
+            apparmor_unconfined: false,
             seccomp: None,
             volumes: vec![],
             tty: true,

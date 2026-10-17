@@ -209,7 +209,7 @@ pub fn assemble(
     );
     add_truststore(cfg, paths, &chome, &mut mounts, &mut env);
     add_ca(cfg, paths, &mut mounts, &mut env);
-    let (allow_new_privileges, seccomp, volumes) = run_shape(paths, facts, req, &chome);
+    let (needs, seccomp, volumes) = run_shape(paths, facts, req, &chome);
     add_containers(facts, req, &mut env);
 
     let (ssh, gh) = add_ssh_gh(cfg, facts, &chome, &mut mounts, &mut env, &mut warnings);
@@ -252,7 +252,8 @@ pub fn assemble(
         cpus: cfg.cpus.map(|c| c.to_string()),
         extra_caps: extra_caps(cfg),
         extra_args: cfg.docker_args.clone(),
-        allow_new_privileges,
+        allow_new_privileges: needs.allow_new_privileges,
+        apparmor_unconfined: needs.apparmor_unconfined,
         seccomp,
         volumes,
         tty: facts.tty,
@@ -453,21 +454,22 @@ fn extra_caps(cfg: &Config) -> Vec<String> {
 }
 
 /// What the enabled toolchains need from `docker run` beyond the image
-/// (ADR 0010): the `no-new-privileges` switch, the seccomp profile file and
-/// the per-project named volumes.
+/// (ADR 0010): the `no-new-privileges` and AppArmor switches, the seccomp
+/// profile file and the per-project named volumes.
 fn run_shape(
     paths: &HostPaths,
     facts: &HostFacts,
     req: &RunRequest,
     chome: &Path,
-) -> (bool, Option<PathBuf>, Vec<(String, PathBuf)>) {
-    let (allow_new_privileges, syscalls, volume_needs) = toolchain::run_needs(&req.toolchains);
-    let volumes = volume_needs
+) -> (toolchain::ChainRun, Option<PathBuf>, Vec<(String, PathBuf)>) {
+    let needs = toolchain::run_needs(&req.toolchains);
+    let volumes = needs
+        .volumes
         .iter()
         .map(|(key, path)| (volume_name(key, &facts.cwd), chome.join(path)))
         .collect();
-    let seccomp = (!syscalls.is_empty()).then(|| paths.seccomp_file());
-    (allow_new_privileges, seccomp, volumes)
+    let seccomp = (!needs.syscalls.is_empty()).then(|| paths.seccomp_file());
+    (needs, seccomp, volumes)
 }
 
 /// Name of a per-project named volume (ADR 0010).
@@ -726,7 +728,7 @@ pub fn prepare_host_dirs(
     }
     crate::plugin::generate(&paths.plugin_dir(), chain)?;
     if let Some(file) = &spec.seccomp {
-        let (_, syscalls, _) = toolchain::run_needs(chain);
+        let syscalls = toolchain::run_needs(chain).syscalls;
         fs::write(file, crate::seccomp::profile(&syscalls)?)
             .with_context(|| format!("writing {}", file.display()))?;
     }
@@ -1227,6 +1229,7 @@ mod tests {
         let a = assemble(&c, &paths(), &facts(), &git(), &req_with(&["docker"]))?;
         let s = a.spec.to_args().join(" ");
         assert!(!s.contains("--security-opt no-new-privileges"));
+        assert!(s.contains("--security-opt apparmor=unconfined"));
         assert!(s.contains("--security-opt seccomp=/home/axel/.config/claude_here/seccomp.json"));
         assert!(s.contains("--cap-drop ALL"));
         assert!(!s.contains("SYS_ADMIN"));
@@ -1240,6 +1243,7 @@ mod tests {
         assert!(s.contains("-e TESTCONTAINERS_RYUK_DISABLED=true"));
         assert!(!s.contains("RYUK_PRIVILEGED"));
         assert!(a.info.system_prompt().contains("no-new-privileges"));
+        assert!(a.info.system_prompt().contains("AppArmor"));
         Ok(())
     }
 
@@ -1252,6 +1256,7 @@ mod tests {
         let a = assemble(&c, &paths(), &facts(), &git(), &req_with(&["rust"]))?;
         let s = a.spec.to_args().join(" ");
         assert!(s.contains("--security-opt no-new-privileges"));
+        assert!(!s.contains("apparmor"));
         assert!(!s.contains("seccomp="));
         assert!(!s.contains("claude_here-containers-"));
         assert!(!s.contains("DOCKER_HOST"));

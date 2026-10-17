@@ -39,6 +39,10 @@ pub struct RunNeeds {
     /// Drop `--security-opt no-new-privileges`, because setuid helpers in the
     /// image must work. The layer is expected to leave no other setuid file.
     pub allow_new_privileges: bool,
+    /// Run with `--security-opt apparmor=unconfined`: Docker's default
+    /// AppArmor profile denies every `mount`, which no capability can lift.
+    /// Ignored by the daemon on hosts without AppArmor.
+    pub apparmor_unconfined: bool,
     /// Syscalls allowed on top of Docker's default seccomp profile.
     pub syscalls: &'static [&'static str],
     /// Named docker volumes, `(key, container path relative to the container
@@ -50,6 +54,7 @@ pub struct RunNeeds {
 impl RunNeeds {
     pub const NONE: RunNeeds = RunNeeds {
         allow_new_privileges: false,
+        apparmor_unconfined: false,
         syscalls: &[],
         volumes: &[],
     };
@@ -492,6 +497,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         credentials: &[],
         run: RunNeeds {
             allow_new_privileges: true,
+            apparmor_unconfined: true,
             syscalls: PODMAN_SYSCALLS,
             volumes: &[("containers", ".local/share/containers/storage")],
         },
@@ -560,23 +566,29 @@ pub fn domains(chain: &[&Toolchain]) -> Vec<String> {
     v
 }
 
+/// The union of what a chain needs from `docker run` (see `RunNeeds`).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ChainRun {
+    pub allow_new_privileges: bool,
+    pub apparmor_unconfined: bool,
+    pub syscalls: Vec<&'static str>,
+    pub volumes: Vec<(&'static str, &'static str)>,
+}
+
 /// The union of what the chain needs from `docker run`.
-pub fn run_needs(
-    chain: &[&Toolchain],
-) -> (bool, Vec<&'static str>, Vec<(&'static str, &'static str)>) {
-    let mut allow = false;
-    let mut syscalls: Vec<&'static str> = Vec::new();
-    let mut volumes: Vec<(&'static str, &'static str)> = Vec::new();
+pub fn run_needs(chain: &[&Toolchain]) -> ChainRun {
+    let mut run = ChainRun::default();
     for t in chain {
-        allow |= t.run.allow_new_privileges;
+        run.allow_new_privileges |= t.run.allow_new_privileges;
+        run.apparmor_unconfined |= t.run.apparmor_unconfined;
         for s in t.run.syscalls {
-            if !syscalls.contains(s) {
-                syscalls.push(s);
+            if !run.syscalls.contains(s) {
+                run.syscalls.push(s);
             }
         }
-        volumes.extend(t.run.volumes.iter().copied());
+        run.volumes.extend(t.run.volumes.iter().copied());
     }
-    (allow, syscalls, volumes)
+    run
 }
 
 /// Credential directories the chain wants when the cloud mode allows them.
@@ -703,13 +715,14 @@ mod tests {
             assert_eq!(t.run != RunNeeds::NONE, t.name == CONTAINERS, "{}", t.name);
         }
         let chain = resolve(&["rust".to_string()]).unwrap_or_default();
-        assert_eq!(run_needs(&chain), (false, vec![], vec![]));
+        assert_eq!(run_needs(&chain), ChainRun::default());
         let chain = resolve(&["docker".to_string(), "rust".to_string()]).unwrap_or_default();
-        let (allow, syscalls, volumes) = run_needs(&chain);
-        assert!(allow);
-        assert_eq!(syscalls, PODMAN_SYSCALLS);
+        let run = run_needs(&chain);
+        assert!(run.allow_new_privileges);
+        assert!(run.apparmor_unconfined);
+        assert_eq!(run.syscalls, PODMAN_SYSCALLS);
         assert_eq!(
-            volumes,
+            run.volumes,
             vec![("containers", ".local/share/containers/storage")]
         );
     }

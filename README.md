@@ -443,7 +443,7 @@ exists but grants nothing beyond the user namespace, host paths and the
 host's images are out of reach, and the host socket is never mounted — that
 would be root on the host (ADR 0010).
 
-Two things are relaxed while the toolchain is on, both stated in the system
+Three things are relaxed while the toolchain is on, all stated in the system
 prompt: `no-new-privileges` is dropped, because mapping the uids of a
 multi-user image (`postgres` switching to its own user) goes through the
 helpers `newuidmap`/`newgidmap`, which gain `CAP_SETUID`/`CAP_SETGID` on exec
@@ -451,7 +451,9 @@ through file capabilities — the layer strips the setuid bit from every file
 in the image and fails to build if one is left — and Docker's default seccomp
 profile is replaced by the same profile plus the namespace and mount syscalls
 rootless podman needs (`unshare`, `mount`, `pivot_root`, `setns`…), still
-without `CAP_SYS_ADMIN`. Capabilities, pids limit and the three restriction
+without `CAP_SYS_ADMIN`; and Docker's default AppArmor profile is not
+applied (`apparmor=unconfined`), because it denies every `mount` and nested
+containers are mounts. Capabilities, pids limit and the three restriction
 axes are unchanged.
 
 Images and layers of the nested containers live in a named docker volume per

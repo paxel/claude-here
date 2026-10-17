@@ -47,7 +47,7 @@ It is a toolchain and not a fourth restriction axis because the user's need is
 useless without the run-shape changes and vice versa. The `Toolchain` registry
 therefore gains run-side fields, which this toolchain is the first to use.
 
-The run shape relaxes in two places, and only while this toolchain is on:
+The run shape relaxes in three places, and only while this toolchain is on:
 
 * **`no-new-privileges` is dropped.** Mapping the uids of a multi-user image
   (`postgres` switching to its own user) goes through the helpers
@@ -74,6 +74,15 @@ The run shape relaxes in two places, and only while this toolchain is on:
   unconditionally. `unconfined` was rejected: it opens forty more syscalls
   (`kexec_load`, `reboot`, `bpf`…) for nothing. The profile is written to the
   config directory before the run and passed as `--security-opt seccomp=`.
+* **Docker's default AppArmor profile is not applied** (`--security-opt
+  apparmor=unconfined`). `docker-default` contains `deny mount,`, which
+  AppArmor enforces regardless of capabilities and namespaces, so podman's
+  overlay probe failed on an Ubuntu host with "kernel does not support
+  overlay fs". A profile of our own cannot be used: it would have to be
+  loaded into the host kernel as root. What `docker-default` adds beyond the
+  dropped capabilities and the read-only `/proc/sys` and `/sys` mounts docker
+  makes anyway is small: the `mount` denial, a few `/proc` write denials and
+  ptrace scoping. The daemon ignores the option on hosts without AppArmor.
 
 Image and layer storage of the nested containers live in a **named docker
 volume per project** (`claude_here-containers-<sha8(project path)>`), mounted
@@ -127,8 +136,9 @@ three restriction axes.
   get their file capabilities (build-time check in the layer, tested through
   the Dockerfile text and on a real image in the integration tests), the
   generated profile parses and keeps Docker's `defaultAction`, and the run
-  arguments carry neither `no-new-privileges` nor the default profile when the
-  toolchain is on and both when it is off.
+  arguments carry neither `no-new-privileges` nor the default seccomp
+  profile, and do carry `apparmor=unconfined`, when the toolchain is on, and
+  the reverse when it is off.
 * The pids limit of 4096 and the memory limit now also bound the nested
   containers. A test suite that starts Kafka and three databases fits; one
   that needs more raises `--memory`, not the sandbox.
