@@ -24,11 +24,12 @@ RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) \
  && [ "${left}" = "/usr/bin/newgidmap /usr/bin/newuidmap " ] \
  || { echo "unexpected setuid/setgid files: ${left}"; exit 1; }
 
-# Debian's storage.conf already selects native overlay (kernel >= 5.11; no
-# FUSE fallback and never vfs) and carries the runroot podman insists on, so it
-# stays untouched. cgroupfs: there is no systemd in the sandbox. The rootless
-# storage root is a named volume (an overlay upper cannot sit on the sandbox's
-# own overlay).
+# Debian's storage.conf stays untouched: it selects native overlay (kernel
+# >= 5.11; no FUSE fallback and never vfs) and declares the rootful runroot
+# and graphroot a storage.conf must contain for podman to start at all; the
+# rootless run uses its own defaults under $XDG_RUNTIME_DIR and ~/.local/share.
+# cgroupfs: there is no systemd in the sandbox. The rootless storage root is a
+# named volume (an overlay upper cannot sit on the sandbox's own overlay).
 RUN printf '[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\n[containers]\nnetns = "pasta"\n' \
       > /etc/containers/containers.conf \
  && mkdir -p "/home/${CH_USER}/.local/share/containers/storage" \

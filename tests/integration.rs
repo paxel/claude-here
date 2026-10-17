@@ -352,6 +352,7 @@ fn docker_toolchain_runs_a_nested_container() {
     ];
     let script = "test -S \"${XDG_RUNTIME_DIR}/podman/podman.sock\" && echo sock=ok; \
         docker info >/dev/null 2>&1 && echo info=ok; \
+        echo driver=$(podman info --format '{{.Store.GraphDriverName}}'); \
         docker run --rm docker.io/library/alpine:3.20 sh -c 'echo nested=ok'; \
         echo user=$(docker run --rm --user 1 docker.io/library/alpine:3.20 id -u); \
         ls -l /usr/bin/newuidmap | cut -c1-10";
@@ -362,6 +363,10 @@ fn docker_toolchain_runs_a_nested_container() {
         .ok();
     assert!(out.contains("sock=ok"), "{out}");
     assert!(out.contains("info=ok"), "{out}");
+    assert!(
+        out.contains("driver=overlay"),
+        "native overlay only (ADR 0010): {out}"
+    );
     assert!(out.contains("nested=ok"), "{out}");
     assert!(out.contains("user=1"), "{out}");
     assert!(
@@ -370,17 +375,10 @@ fn docker_toolchain_runs_a_nested_container() {
     );
 }
 
-/// A mounted PEM ends up in the system bundle at session start (ADR 0009).
-#[test]
-#[ignore = "needs docker"]
-fn ca_is_added_to_the_system_bundle() {
-    let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
-    let xdg = config_root(tmp.path());
-    let project = tmp.path().join("proj");
-    fs::create_dir_all(&project).ok();
-    ensure_base(&xdg, &project);
-    let pem = tmp.path().join("ca.pem");
-    let key = tmp.path().join("ca.key");
+/// A throwaway self-signed CA, and the mount that puts it where the root
+/// phase looks (ADR 0009).
+fn itest_ca_mount(dir: &Path) -> Vec<String> {
+    let pem = dir.join("ca.pem");
     let made = Command::new("openssl")
         .args([
             "req",
@@ -394,7 +392,7 @@ fn ca_is_added_to_the_system_bundle() {
             "/CN=claude_here itest CA",
         ])
         .arg("-keyout")
-        .arg(&key)
+        .arg(dir.join("ca.key"))
         .arg("-out")
         .arg(&pem)
         .output()
@@ -404,19 +402,34 @@ fn ca_is_added_to_the_system_bundle() {
         "{}",
         String::from_utf8_lossy(&made.stderr)
     );
-    let uid = users_uid();
-    let image = claude_here::image::base_tag(&uid.0);
-    let extra = vec![
+    vec![
         "-v".to_string(),
         format!("{}:{}:ro", pem.display(), claude_here::run::CA_CRT),
-    ];
+    ]
+}
+
+/// A mounted PEM ends up in the system bundle at session start (ADR 0009).
+#[test]
+#[ignore = "needs docker"]
+fn ca_is_added_to_the_system_bundle() {
+    let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+    let xdg = config_root(tmp.path());
+    let project = tmp.path().join("proj");
+    fs::create_dir_all(&project).ok();
+    ensure_base(&xdg, &project);
+    let extra = itest_ca_mount(tmp.path());
+    let uid = users_uid();
+    let image = claude_here::image::base_tag(&uid.0);
     // A self-signed CA verifies only against a bundle that contains it.
     let script = "openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt \
         /usr/local/share/ca-certificates/claude_here.crt && echo verify=ok; \
-        ls /etc/ssl/certs/ | grep -c claude_here";
+        test -L /etc/ssl/certs/claude_here.pem && echo link=ok";
     let out = entrypoint_run_raw(&image, true, &extra, &[], script);
     assert!(out.contains("verify=ok"), "{out}");
-    assert!(out.contains("\n1\n"), "no bundle symlink for the CA: {out}");
+    assert!(
+        out.contains("link=ok"),
+        "no bundle symlink for the CA: {out}"
+    );
 }
 
 /// With the jvm layer, the root phase also imports the PEM into the JDK's own
@@ -430,37 +443,9 @@ fn ca_is_imported_into_the_jvm_cacerts() {
     fs::create_dir_all(&project).ok();
     let (code, _, err) = run_tool(&xdg, &project, &["build", "-t", "jvm"]);
     assert_eq!(code, 0, "build failed: {err}");
-    let pem = tmp.path().join("ca.pem");
-    let key = tmp.path().join("ca.key");
-    let made = Command::new("openssl")
-        .args([
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-days",
-            "1",
-            "-subj",
-            "/CN=claude_here itest CA",
-        ])
-        .arg("-keyout")
-        .arg(&key)
-        .arg("-out")
-        .arg(&pem)
-        .output()
-        .unwrap_or_else(|e| panic!("openssl: {e}"));
-    assert!(
-        made.status.success(),
-        "{}",
-        String::from_utf8_lossy(&made.stderr)
-    );
+    let extra = itest_ca_mount(tmp.path());
     let uid = users_uid();
     let image = claude_here::image::chain_tag(uid.0, &["jvm".to_string()]);
-    let extra = vec![
-        "-v".to_string(),
-        format!("{}:{}:ro", pem.display(), claude_here::run::CA_CRT),
-    ];
     let script = "keytool -list -cacerts -storepass changeit -alias claude_here \
         && echo keytool=ok";
     let out = entrypoint_run_raw(&image, true, &extra, &[], script);
