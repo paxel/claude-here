@@ -308,12 +308,6 @@ fn docker_toolchain_dry_run_relaxes_the_run_shape() {
         "{out}"
     );
     assert!(out.contains("-docker-claude "), "{out}");
-    let profile = xdg.join("claude_here").join("seccomp.json");
-    assert!(
-        profile.exists(),
-        "profile not written at {}",
-        profile.display()
-    );
 }
 
 /// The docker layer builds (its setuid check passes), the entrypoint brings
@@ -355,7 +349,8 @@ fn docker_toolchain_runs_a_nested_container() {
         echo driver=$(podman info --format '{{.Store.GraphDriverName}}'); \
         docker run --rm docker.io/library/alpine:3.20 sh -c 'echo nested=ok'; \
         echo user=$(docker run --rm --user 1 docker.io/library/alpine:3.20 id -u); \
-        ls -l /usr/bin/newuidmap | cut -c1-10";
+        getcap /usr/bin/newuidmap /usr/bin/newgidmap; \
+        find / -xdev -type f -perm /6000 2>/dev/null | sed 's/^/setuid=/'";
     let out = entrypoint_run_raw(&image, false, &extra, &env, script);
     Command::new("docker")
         .args(["volume", "rm", "-f", &volume])
@@ -370,8 +365,16 @@ fn docker_toolchain_runs_a_nested_container() {
     assert!(out.contains("nested=ok"), "{out}");
     assert!(out.contains("user=1"), "{out}");
     assert!(
-        out.contains("-rwsr-xr-x"),
-        "newuidmap must stay setuid: {out}"
+        out.contains("cap_setuid=ep") || out.contains("cap_setuid+ep"),
+        "newuidmap must carry CAP_SETUID: {out}"
+    );
+    assert!(
+        out.contains("cap_setgid=ep") || out.contains("cap_setgid+ep"),
+        "newgidmap must carry CAP_SETGID: {out}"
+    );
+    assert!(
+        !out.contains("setuid="),
+        "no setuid file may be left: {out}"
     );
 }
 

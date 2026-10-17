@@ -12,17 +12,26 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update \
  && apt-get install -y --no-install-recommends \
       podman podman-docker crun passt netavark aardvark-dns uidmap catatonit \
+      libcap2-bin \
  && touch /etc/containers/nodocker \
  && usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "${CH_USER}"
 
-# `no-new-privileges` is off while this toolchain runs, so the only setuid or
-# setgid files left in the image are the two helpers that need it. The build
-# fails if anything else is found; the tool's tests pin this block.
-RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) \
-      ! -name newuidmap ! -name newgidmap -exec chmod ug-s {} + \
+# `no-new-privileges` is off while this toolchain runs, so no file in the
+# image may be setuid or setgid; the build fails if one is left. The two
+# uid-mapping helpers carry file capabilities instead, the way Fedora ships
+# them. Setuid root would not even work: the kernel lets a process write
+# another namespace's uid_map only when it owns that namespace or holds
+# CAP_SYS_ADMIN over it. Root in the sandbox has neither (and must not get
+# CAP_SYS_ADMIN); the sandbox user owns the namespace podman creates and
+# needs only CAP_SETUID/CAP_SETGID, which are in the bounding set. The tool's
+# tests pin this block.
+RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} + \
  && left="$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) | sort | tr '\n' ' ')" \
- && [ "${left}" = "/usr/bin/newgidmap /usr/bin/newuidmap " ] \
- || { echo "unexpected setuid/setgid files: ${left}"; exit 1; }
+ && [ -z "${left}" ] \
+ || { echo "unexpected setuid/setgid files: ${left}"; exit 1; } \
+ && setcap cap_setuid+ep /usr/bin/newuidmap \
+ && setcap cap_setgid+ep /usr/bin/newgidmap \
+ && getcap /usr/bin/newuidmap /usr/bin/newgidmap
 
 # Debian's storage.conf stays untouched: it selects native overlay (kernel
 # >= 5.11; no FUSE fallback and never vfs) and declares the rootful runroot

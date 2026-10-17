@@ -446,8 +446,9 @@ would be root on the host (ADR 0010).
 Two things are relaxed while the toolchain is on, both stated in the system
 prompt: `no-new-privileges` is dropped, because mapping the uids of a
 multi-user image (`postgres` switching to its own user) goes through the
-setuid helpers `newuidmap`/`newgidmap` — the layer strips the setuid bit from
-every other file and fails to build otherwise — and Docker's default seccomp
+helpers `newuidmap`/`newgidmap`, which gain `CAP_SETUID`/`CAP_SETGID` on exec
+through file capabilities — the layer strips the setuid bit from every file
+in the image and fails to build if one is left — and Docker's default seccomp
 profile is replaced by the same profile plus the namespace and mount syscalls
 rootless podman needs (`unshare`, `mount`, `pivot_root`, `setns`…), still
 without `CAP_SYS_ADMIN`. Capabilities, pids limit and the three restriction

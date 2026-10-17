@@ -1172,6 +1172,52 @@ mod tests {
         Ok(())
     }
 
+    /// The profile file `--security-opt seccomp=` points at is written by
+    /// `prepare_host_dirs`, so a real run finds it; `--dry-run` writes nothing.
+    #[test]
+    fn prepare_host_dirs_writes_the_seccomp_profile() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let home = tmp.path().to_path_buf();
+        let host = HostPaths::new(home.clone(), home.join("cfg"));
+        let project = home.join("proj");
+        fs::create_dir_all(&project)?;
+        fs::create_dir_all(&host.config_dir)?;
+        fs::write(host.config_dir.join("token"), "t")?;
+        let hf = HostFacts {
+            cwd: project.clone(),
+            gitconfig: None,
+            ssh_auth_sock: None,
+            known_hosts: None,
+            gh_token: None,
+            token_file: Some(host.config_dir.join("token")),
+            empty_file: host.config_dir.join("empty"),
+            ..facts()
+        };
+        let conf = cfg(ConfigFile {
+            toolchains: vec!["docker".into()],
+            ..Default::default()
+        });
+        let request = req_with(&["docker"]);
+        let a = assemble(&conf, &host, &hf, &GitLayout::default(), &request)?;
+        assert_eq!(
+            a.spec.seccomp.as_deref(),
+            Some(host.seccomp_file().as_path())
+        );
+        prepare_host_dirs(
+            &host,
+            &conf,
+            &a.spec,
+            &request.toolchains,
+            &request.session_id,
+            &project,
+        )?;
+        let text = fs::read_to_string(host.seccomp_file())?;
+        let doc: serde_json::Value = serde_json::from_str(&text)?;
+        assert_eq!(doc["defaultAction"], "SCMP_ACT_ERRNO");
+        assert!(text.contains("\"unshare\""));
+        Ok(())
+    }
+
     #[test]
     fn docker_toolchain_relaxes_the_run_shape_and_wires_the_socket() -> Result<()> {
         let c = cfg(ConfigFile {

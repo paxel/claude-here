@@ -50,13 +50,21 @@ therefore gains run-side fields, which this toolchain is the first to use.
 The run shape relaxes in two places, and only while this toolchain is on:
 
 * **`no-new-privileges` is dropped.** Mapping the uids of a multi-user image
-  (`postgres` switching to its own user) goes through the setuid helpers
-  `newuidmap`/`newgidmap`, and that flag forbids every setuid gain. The
-  flag was defending nothing else: the layer strips the setuid and setgid bits
-  from every other file in the image (`su`, `mount`, `passwd`…) and the build
-  fails if anything but those two helpers is left setuid. `CAP_SETUID` and
-  `CAP_SETGID` are already in the bounding set for the entrypoint's own
-  `setpriv`.
+  (`postgres` switching to its own user) goes through the helpers
+  `newuidmap`/`newgidmap`, which gain `CAP_SETUID`/`CAP_SETGID` on exec, and
+  that flag forbids every privilege gain on exec. The flag was defending
+  nothing else: the layer strips the setuid and setgid bits from every file
+  in the image (`su`, `mount`, `passwd`, and the two helpers themselves) and
+  the build fails if any is left. The helpers carry file capabilities
+  instead, as Fedora ships them, and not out of taste: the kernel lets a
+  process write another namespace's `uid_map` only when it owns that
+  namespace or holds `CAP_SYS_ADMIN` over it. A setuid-root helper is root,
+  which does not own the namespace the sandbox user created and must not get
+  `CAP_SYS_ADMIN`; the first real run failed exactly there (`newuidmap: write
+  to uid_map failed: Operation not permitted`). With file capabilities the
+  helper stays the sandbox user, owns the namespace, and needs only
+  `CAP_SETUID`/`CAP_SETGID`, which are in the bounding set already for the
+  entrypoint's own `setpriv`.
 * **A custom seccomp profile replaces Docker's default.** The default allows
   `unshare`, `clone3`, `mount`, `umount2`, `pivot_root`, `setns`,
   `sethostname` and the new mount API only with `CAP_SYS_ADMIN`, which the
@@ -115,8 +123,9 @@ three restriction axes.
 * Within one session, a test JVM killed with `kill -9` leaves its containers
   running and counting against the pids limit; `docker ps` / `docker rm` as
   usual.
-* `cargo test` guards: `newuidmap`/`newgidmap` are the only setuid files
-  (build-time check in the layer, tested through the Dockerfile text), the
+* `cargo test` guards: no setuid or setgid file is left and the two helpers
+  get their file capabilities (build-time check in the layer, tested through
+  the Dockerfile text and on a real image in the integration tests), the
   generated profile parses and keeps Docker's `defaultAction`, and the run
   arguments carry neither `no-new-privileges` nor the default profile when the
   toolchain is on and both when it is off.

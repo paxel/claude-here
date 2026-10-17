@@ -714,14 +714,19 @@ mod tests {
         );
     }
 
-    /// With `no-new-privileges` off, the layer must leave exactly the two
-    /// uid-mapping helpers setuid and fail its build otherwise.
+    /// With `no-new-privileges` off, the layer must leave no setuid or setgid
+    /// file at all and fail its build otherwise; the uid-mapping helpers get
+    /// file capabilities, which is the only form the kernel accepts from a
+    /// process without CAP_SYS_ADMIN (ADR 0010).
     #[test]
-    fn docker_layer_strips_every_other_setuid_file() {
+    fn docker_layer_strips_every_setuid_file_and_caps_the_helpers() {
         let d = find("docker").map_or("", |t| t.dockerfile);
-        assert!(d.contains("! -name newuidmap ! -name newgidmap -exec chmod ug-s"));
-        assert!(d.contains(r#"[ "${left}" = "/usr/bin/newgidmap /usr/bin/newuidmap " ]"#));
+        assert!(d.contains(r"\( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} +"));
+        assert!(d.contains(r#"[ -z "${left}" ]"#));
         assert!(d.contains("exit 1"));
+        assert!(d.contains("setcap cap_setuid+ep /usr/bin/newuidmap"));
+        assert!(d.contains("setcap cap_setgid+ep /usr/bin/newgidmap"));
+        assert!(d.contains("libcap2-bin"), "setcap comes from libcap2-bin");
         assert!(
             d.contains("--add-subuids"),
             "rootless podman needs a subuid range"
