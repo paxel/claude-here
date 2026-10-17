@@ -638,6 +638,23 @@ isolated = true
     }
 
     #[test]
+    fn shipped_examples_load_and_name_known_toolchains() -> Result<()> {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+        let mut seen = 0;
+        for entry in std::fs::read_dir(&dir)? {
+            let path = entry?.path();
+            if path.extension().is_none_or(|e| e != "toml") {
+                continue;
+            }
+            let file = ConfigFile::load(&path)?;
+            crate::toolchain::resolve(&file.toolchains)?;
+            seen += 1;
+        }
+        assert_eq!(seen, 3, "examples/*.toml");
+        Ok(())
+    }
+
+    #[test]
     fn unknown_keys_rejected() {
         let r: Result<ConfigFile, _> = toml::from_str("imgae = \"x\"");
         assert!(r.is_err());

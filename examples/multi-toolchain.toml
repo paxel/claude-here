@@ -1,0 +1,24 @@
+# .claude_here/config.toml for a service with a JVM backend, a Node frontend,
+# a testcontainers suite and Kubernetes manifests.
+#
+# Toolchains are layers in a fixed order whatever order they are listed in;
+# `claude_here toolchains` shows it. See docs/testcontainers.md for --docker.
+
+toolchains = ["jvm", "node", "docker", "k8s"]
+
+# Claude may add and commit; push, checkout and branch creation stay denied.
+git_mode = "commit"
+
+# Tools only, no kubeconfig mounted: helm template and kustomize build work,
+# nothing live is reachable. `ro` would mount ~/.kube with read verbs only.
+cloud_mode = "none"
+
+# The JVM suite plus its containers; nested containers count against this.
+memory = "8g"
+cpus = 4
+
+# Literal values and host variables, mixed.
+env = ["MAVEN_OPTS=-Xmx2g", "SONAR_TOKEN"]
+
+# MCP servers are never inherited from the host; name the ones this project may use.
+mcp = ["github"]

@@ -1,0 +1,8 @@
+# .claude_here/config.toml for a Rust project that lets Claude commit.
+#
+# Copy into the project as .claude_here/config.toml. Everything not set here
+# keeps its default: git mode ro, cloud mode none, network full, capture on.
+# `claude_here --rust --git commit --save` writes the same file.
+
+toolchains = ["rust"]
+git_mode = "commit"

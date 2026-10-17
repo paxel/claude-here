@@ -660,7 +660,9 @@ cargo test -- --ignored         # integration tests, need docker and build the b
 cargo clippy --all-targets -- -D warnings
 ```
 
-Design decisions are recorded in `docs/adr/`.
+Guides for single situations (testcontainers, company CA and proxy, WSL) are
+in [`docs/`](docs/README.md), ready-to-copy configurations in
+[`examples/`](examples/), and design decisions in `docs/adr/`.
 
 ## License
 

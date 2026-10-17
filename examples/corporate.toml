@@ -1,0 +1,28 @@
+# ~/.config/claude_here/config.toml for a company network: proxy, company CA,
+# private registries, egress restricted to known hosts.
+#
+# Global file, so every project on the machine gets it; a project's
+# .claude_here/config.toml overrides single keys and appends to the lists.
+# See docs/company-ca-and-proxy.md.
+
+# Host variables passed through by name; values are never written here.
+env = ["http_proxy", "https_proxy", "no_proxy"]
+
+# Only the hosts the enabled toolchains need plus these.
+net_mode = "allowlist"
+net_allow = ["nexus.example.com", "registry.example.com", "gitlab.example.com"]
+
+# A read-only mount for files the configuration below refers to.
+[[mounts]]
+path = "~/company/certs"
+mode = "ro"
+
+[tls]
+# PEM with the company CA (or chain); trusted by every client in the container.
+ca = "~/company/certs/ca.pem"
+# Optional: a ready-made JKS/PKCS12 for the JVM; wins over `ca` for Java when set.
+truststore = "~/company/certs/cacerts"
+
+[caches]
+# The host's ~/.m2 is mounted; keep the file with credentials out.
+m2_exclude = ["settings.xml"]
