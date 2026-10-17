@@ -43,6 +43,10 @@ pub struct RunNeeds {
     /// AppArmor profile denies every `mount`, which no capability can lift.
     /// Ignored by the daemon on hosts without AppArmor.
     pub apparmor_unconfined: bool,
+    /// Run with `--security-opt systempaths=unconfined`: without Docker's
+    /// masks and read-only binds over `/proc`, the sandbox's procfs is "fully
+    /// visible" and a nested container may mount a procfs of its own.
+    pub system_paths_unconfined: bool,
     /// Syscalls allowed on top of Docker's default seccomp profile.
     pub syscalls: &'static [&'static str],
     /// Host device nodes passed through (`--device`).
@@ -57,6 +61,7 @@ impl RunNeeds {
     pub const NONE: RunNeeds = RunNeeds {
         allow_new_privileges: false,
         apparmor_unconfined: false,
+        system_paths_unconfined: false,
         syscalls: &[],
         devices: &[],
         volumes: &[],
@@ -504,6 +509,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         run: RunNeeds {
             allow_new_privileges: true,
             apparmor_unconfined: true,
+            system_paths_unconfined: true,
             syscalls: PODMAN_SYSCALLS,
             // pasta, the rootless network, builds the container's interface
             // on a tap device; the sandbox has no /dev/net/tun of its own.
@@ -580,6 +586,7 @@ pub fn domains(chain: &[&Toolchain]) -> Vec<String> {
 pub struct ChainRun {
     pub allow_new_privileges: bool,
     pub apparmor_unconfined: bool,
+    pub system_paths_unconfined: bool,
     pub syscalls: Vec<&'static str>,
     pub devices: Vec<&'static str>,
     pub volumes: Vec<(&'static str, &'static str)>,
@@ -591,6 +598,7 @@ pub fn run_needs(chain: &[&Toolchain]) -> ChainRun {
     for t in chain {
         run.allow_new_privileges |= t.run.allow_new_privileges;
         run.apparmor_unconfined |= t.run.apparmor_unconfined;
+        run.system_paths_unconfined |= t.run.system_paths_unconfined;
         for s in t.run.syscalls {
             if !run.syscalls.contains(s) {
                 run.syscalls.push(s);
@@ -735,6 +743,7 @@ mod tests {
         let run = run_needs(&chain);
         assert!(run.allow_new_privileges);
         assert!(run.apparmor_unconfined);
+        assert!(run.system_paths_unconfined);
         assert_eq!(run.syscalls, PODMAN_SYSCALLS);
         assert_eq!(run.devices, vec!["/dev/net/tun"]);
         assert_eq!(

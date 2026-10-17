@@ -47,7 +47,7 @@ It is a toolchain and not a fourth restriction axis because the user's need is
 useless without the run-shape changes and vice versa. The `Toolchain` registry
 therefore gains run-side fields, which this toolchain is the first to use.
 
-The run shape changes in four places, and only while this toolchain is on:
+The run shape changes in five places, and only while this toolchain is on:
 
 * **`no-new-privileges` is dropped.** Mapping the uids of a multi-user image
   (`postgres` switching to its own user) goes through the helpers
@@ -90,6 +90,20 @@ The run shape changes in four places, and only while this toolchain is on:
   device; the sandbox container has no such node of its own. The node is
   usable only with `CAP_NET_ADMIN` over a network namespace, which the
   sandbox user holds inside its own user namespace and nowhere else.
+* **Docker's `/proc` masks and read-only paths are not applied**
+  (`--security-opt systempaths=unconfined`). The kernel lets a user namespace
+  mount a procfs of its own only if the procfs it can already see is "fully
+  visible", that is, not overmounted; Docker's masks (`/proc/kcore`,
+  `/proc/keys`…) and read-only binds (`/proc/sys`…) are such overmounts.
+  With them in place crun cannot mount `/proc` for the nested container,
+  falls back to binding the sandbox's, and the container's own sysctls fail
+  (`open /proc/sys/net/ipv4/ping_group_range: Read-only file system`), as
+  would anything reading its pids through `/proc`. What this gives up: the
+  root phase of the entrypoint could now write global sysctls, which the
+  read-only bind prevented; the sandbox user cannot, the files are root's,
+  and the nested containers' network namespaces are the only ones it owns.
+  The masked files are readable by root only. The root phase is this tool's
+  own script, short, and runs before anything of the user's.
 
 Image and layer storage of the nested containers live in a **named docker
 volume per project** (`claude_here-containers-<sha8(project path)>`), mounted

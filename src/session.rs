@@ -215,7 +215,7 @@ impl SessionInfo {
             .any(|t| t == crate::toolchain::CONTAINERS)
         {
             s.push_str(
-                "The docker toolchain is on: `docker` and `podman` run rootless containers inside this sandbox as the sandbox user (DOCKER_HOST is set, testcontainers works). They share this sandbox's network filter, capture, pids and memory limits; no host docker daemon, host path or host image is reachable, and `--privileged` grants nothing beyond the user namespace. For the uid-mapping helpers and the mounts this needs, no-new-privileges is off and Docker's default AppArmor profile is not applied for this session; capabilities are not relaxed. ",
+                "The docker toolchain is on: `docker` and `podman` run rootless containers inside this sandbox as the sandbox user (DOCKER_HOST is set, testcontainers works). They share this sandbox's network filter, capture, pids and memory limits; no host docker daemon, host path or host image is reachable, and `--privileged` grants nothing beyond the user namespace. For the uid-mapping helpers and the mounts this needs, no-new-privileges is off and neither Docker's default AppArmor profile nor its /proc masks are applied for this session; capabilities are not relaxed. ",
             );
         }
         s

@@ -81,6 +81,10 @@ pub struct RunSpec {
     /// `mount`, which rootless podman needs (ADR 0010). The daemon ignores
     /// the option on hosts without AppArmor.
     pub apparmor_unconfined: bool,
+    /// `--security-opt systempaths=unconfined`: no masked or read-only
+    /// `/proc` paths, so a nested container can mount its own procfs
+    /// (ADR 0010).
+    pub system_paths_unconfined: bool,
     /// Custom seccomp profile file instead of Docker's default.
     pub seccomp: Option<PathBuf>,
     /// Host device nodes passed through with `--device`.
@@ -115,6 +119,9 @@ impl RunSpec {
         }
         if self.apparmor_unconfined {
             a.extend(["--security-opt".into(), "apparmor=unconfined".into()]);
+        }
+        if self.system_paths_unconfined {
+            a.extend(["--security-opt".into(), "systempaths=unconfined".into()]);
         }
         if let Some(p) = &self.seccomp {
             a.extend(["--security-opt".into(), format!("seccomp={}", p.display())]);
@@ -163,6 +170,7 @@ mod run_shape_tests {
             image: "claude_here:base-docker".into(),
             allow_new_privileges: true,
             apparmor_unconfined: true,
+            system_paths_unconfined: true,
             seccomp: Some("/home/axel/.config/claude_here/seccomp.json".into()),
             devices: vec!["/dev/net/tun".into()],
             volumes: vec![(
@@ -174,6 +182,7 @@ mod run_shape_tests {
         let s = spec.to_args().join(" ");
         assert!(!s.contains("no-new-privileges"));
         assert!(s.contains("--security-opt apparmor=unconfined"));
+        assert!(s.contains("--security-opt systempaths=unconfined"));
         assert!(s.contains("--device /dev/net/tun"));
         assert!(s.contains("--security-opt seccomp=/home/axel/.config/claude_here/seccomp.json"));
         assert!(s.contains(
@@ -357,6 +366,7 @@ mod tests {
             extra_args: vec!["--network".into(), "mynet".into()],
             allow_new_privileges: false,
             apparmor_unconfined: false,
+            system_paths_unconfined: false,
             seccomp: None,
             devices: vec![],
             volumes: vec![],

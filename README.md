@@ -454,8 +454,10 @@ profile is replaced by the same profile plus the namespace and mount syscalls
 rootless podman needs (`unshare`, `mount`, `pivot_root`, `setns`…), still
 without `CAP_SYS_ADMIN`; and Docker's default AppArmor profile is not
 applied (`apparmor=unconfined`), because it denies every `mount` and nested
-containers are mounts. Capabilities, pids limit and the three restriction
-axes are unchanged.
+containers are mounts. Docker's `/proc` masks go too
+(`systempaths=unconfined`): the kernel only lets a nested container mount
+its own `/proc` when the sandbox's is not overmounted. Capabilities, pids
+limit and the three restriction axes are unchanged.
 
 Images and layers of the nested containers live in a named docker volume per
 project (`claude_here-containers-<sha8>`), so pulls happen once per project

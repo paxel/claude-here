@@ -248,6 +248,7 @@ pub fn assemble(
         extra_args: cfg.docker_args.clone(),
         allow_new_privileges: needs.allow_new_privileges,
         apparmor_unconfined: needs.apparmor_unconfined,
+        system_paths_unconfined: needs.system_paths_unconfined,
         devices: needs.devices.iter().map(ToString::to_string).collect(),
         seccomp,
         volumes,
@@ -1235,6 +1236,7 @@ mod tests {
         let s = a.spec.to_args().join(" ");
         assert!(!s.contains("--security-opt no-new-privileges"));
         assert!(s.contains("--security-opt apparmor=unconfined"));
+        assert!(s.contains("--security-opt systempaths=unconfined"));
         assert!(s.contains("--device /dev/net/tun"));
         assert!(s.contains("--security-opt seccomp=/home/axel/.config/claude_here/seccomp.json"));
         assert!(s.contains("--cap-drop ALL"));
@@ -1263,6 +1265,7 @@ mod tests {
         let s = a.spec.to_args().join(" ");
         assert!(s.contains("--security-opt no-new-privileges"));
         assert!(!s.contains("apparmor"));
+        assert!(!s.contains("systempaths"));
         assert!(!s.contains("--device"));
         assert!(!s.contains("seccomp="));
         assert!(!s.contains("claude_here-containers-"));
