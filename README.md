@@ -444,7 +444,8 @@ host's images are out of reach, and the host socket is never mounted — that
 would be root on the host (ADR 0010).
 
 Three things are relaxed while the toolchain is on, all stated in the system
-prompt: `no-new-privileges` is dropped, because mapping the uids of a
+prompt (plus `/dev/net/tun` passed through for the nested containers'
+network): `no-new-privileges` is dropped, because mapping the uids of a
 multi-user image (`postgres` switching to its own user) goes through the
 helpers `newuidmap`/`newgidmap`, which gain `CAP_SETUID`/`CAP_SETGID` on exec
 through file capabilities — the layer strips the setuid bit from every file

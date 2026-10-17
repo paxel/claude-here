@@ -233,15 +233,9 @@ pub fn assemble(
     ));
 
     let command = claude_command(req, &info);
-    let base = facts
-        .cwd
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let short = req.session_id.rsplit('-').next().unwrap_or("x");
     let spec = RunSpec {
         image: req.image_tag.clone(),
-        container_name: format!("claude_here-{}-{short}", sanitize_name(&base)),
+        container_name: container_name(&facts.cwd, &req.session_id),
         hostname: "claude-here".into(),
         workdir: cwd_c,
         mounts,
@@ -254,6 +248,7 @@ pub fn assemble(
         extra_args: cfg.docker_args.clone(),
         allow_new_privileges: needs.allow_new_privileges,
         apparmor_unconfined: needs.apparmor_unconfined,
+        devices: needs.devices.iter().map(ToString::to_string).collect(),
         seccomp,
         volumes,
         tty: facts.tty,
@@ -264,6 +259,16 @@ pub fn assemble(
         info,
         warnings,
     })
+}
+
+/// `claude_here-<project dir>-<session suffix>`.
+fn container_name(cwd: &Path, session_id: &str) -> String {
+    let base = cwd
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let short = session_id.rsplit('-').next().unwrap_or("x");
+    format!("claude_here-{}-{short}", sanitize_name(&base))
 }
 
 /// The blob handed to Claude: what was granted and where things are.
@@ -1230,6 +1235,7 @@ mod tests {
         let s = a.spec.to_args().join(" ");
         assert!(!s.contains("--security-opt no-new-privileges"));
         assert!(s.contains("--security-opt apparmor=unconfined"));
+        assert!(s.contains("--device /dev/net/tun"));
         assert!(s.contains("--security-opt seccomp=/home/axel/.config/claude_here/seccomp.json"));
         assert!(s.contains("--cap-drop ALL"));
         assert!(!s.contains("SYS_ADMIN"));
@@ -1257,6 +1263,7 @@ mod tests {
         let s = a.spec.to_args().join(" ");
         assert!(s.contains("--security-opt no-new-privileges"));
         assert!(!s.contains("apparmor"));
+        assert!(!s.contains("--device"));
         assert!(!s.contains("seccomp="));
         assert!(!s.contains("claude_here-containers-"));
         assert!(!s.contains("DOCKER_HOST"));

@@ -83,6 +83,8 @@ pub struct RunSpec {
     pub apparmor_unconfined: bool,
     /// Custom seccomp profile file instead of Docker's default.
     pub seccomp: Option<PathBuf>,
+    /// Host device nodes passed through with `--device`.
+    pub devices: Vec<String>,
     /// Named volumes `(name, container path)`.
     pub volumes: Vec<(String, PathBuf)>,
     pub tty: bool,
@@ -129,6 +131,9 @@ impl RunSpec {
         for m in &self.mounts {
             a.extend(["-v".into(), m.to_flag()]);
         }
+        for d in &self.devices {
+            a.extend(["--device".into(), d.clone()]);
+        }
         for (name, path) in &self.volumes {
             a.extend(["-v".into(), format!("{name}:{}", path.display())]);
         }
@@ -159,6 +164,7 @@ mod run_shape_tests {
             allow_new_privileges: true,
             apparmor_unconfined: true,
             seccomp: Some("/home/axel/.config/claude_here/seccomp.json".into()),
+            devices: vec!["/dev/net/tun".into()],
             volumes: vec![(
                 "claude_here-containers-abcd1234".into(),
                 "/home/ni/.local/share/containers/storage".into(),
@@ -168,6 +174,7 @@ mod run_shape_tests {
         let s = spec.to_args().join(" ");
         assert!(!s.contains("no-new-privileges"));
         assert!(s.contains("--security-opt apparmor=unconfined"));
+        assert!(s.contains("--device /dev/net/tun"));
         assert!(s.contains("--security-opt seccomp=/home/axel/.config/claude_here/seccomp.json"));
         assert!(s.contains(
             "-v claude_here-containers-abcd1234:/home/ni/.local/share/containers/storage "
@@ -351,6 +358,7 @@ mod tests {
             allow_new_privileges: false,
             apparmor_unconfined: false,
             seccomp: None,
+            devices: vec![],
             volumes: vec![],
             tty: true,
             command: vec!["claude".into(), "-p".into(), "hi".into()],

@@ -47,7 +47,7 @@ It is a toolchain and not a fourth restriction axis because the user's need is
 useless without the run-shape changes and vice versa. The `Toolchain` registry
 therefore gains run-side fields, which this toolchain is the first to use.
 
-The run shape relaxes in three places, and only while this toolchain is on:
+The run shape changes in four places, and only while this toolchain is on:
 
 * **`no-new-privileges` is dropped.** Mapping the uids of a multi-user image
   (`postgres` switching to its own user) goes through the helpers
@@ -85,6 +85,11 @@ The run shape relaxes in three places, and only while this toolchain is on:
   dropped capabilities and the read-only `/proc/sys` and `/sys` mounts docker
   makes anyway is small: the `mount` denial, a few `/proc` write denials and
   ptrace scoping. The daemon ignores the option on hosts without AppArmor.
+* **`/dev/net/tun` is passed through** (`--device`). Nested containers get
+  their network from pasta, which builds the container's interface on a tap
+  device; the sandbox container has no such node of its own. The node is
+  usable only with `CAP_NET_ADMIN` over a network namespace, which the
+  sandbox user holds inside its own user namespace and nowhere else.
 
 Image and layer storage of the nested containers live in a **named docker
 volume per project** (`claude_here-containers-<sha8(project path)>`), mounted

@@ -45,6 +45,8 @@ pub struct RunNeeds {
     pub apparmor_unconfined: bool,
     /// Syscalls allowed on top of Docker's default seccomp profile.
     pub syscalls: &'static [&'static str],
+    /// Host device nodes passed through (`--device`).
+    pub devices: &'static [&'static str],
     /// Named docker volumes, `(key, container path relative to the container
     /// home)`. The volume is `claude_here-<key>-<sha8(project path)>`, one per
     /// project, for content that cannot live on a bind mount.
@@ -56,6 +58,7 @@ impl RunNeeds {
         allow_new_privileges: false,
         apparmor_unconfined: false,
         syscalls: &[],
+        devices: &[],
         volumes: &[],
     };
 }
@@ -502,6 +505,9 @@ pub const TOOLCHAINS: &[Toolchain] = &[
             allow_new_privileges: true,
             apparmor_unconfined: true,
             syscalls: PODMAN_SYSCALLS,
+            // pasta, the rootless network, builds the container's interface
+            // on a tap device; the sandbox has no /dev/net/tun of its own.
+            devices: &["/dev/net/tun"],
             volumes: &[("containers", ".local/share/containers/storage")],
         },
     },
@@ -575,6 +581,7 @@ pub struct ChainRun {
     pub allow_new_privileges: bool,
     pub apparmor_unconfined: bool,
     pub syscalls: Vec<&'static str>,
+    pub devices: Vec<&'static str>,
     pub volumes: Vec<(&'static str, &'static str)>,
 }
 
@@ -587,6 +594,11 @@ pub fn run_needs(chain: &[&Toolchain]) -> ChainRun {
         for s in t.run.syscalls {
             if !run.syscalls.contains(s) {
                 run.syscalls.push(s);
+            }
+        }
+        for d in t.run.devices {
+            if !run.devices.contains(d) {
+                run.devices.push(d);
             }
         }
         run.volumes.extend(t.run.volumes.iter().copied());
@@ -724,6 +736,7 @@ mod tests {
         assert!(run.allow_new_privileges);
         assert!(run.apparmor_unconfined);
         assert_eq!(run.syscalls, PODMAN_SYSCALLS);
+        assert_eq!(run.devices, vec!["/dev/net/tun"]);
         assert_eq!(
             run.volumes,
             vec![("containers", ".local/share/containers/storage")]

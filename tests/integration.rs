@@ -301,6 +301,7 @@ fn docker_toolchain_dry_run_relaxes_the_run_shape() {
     assert_eq!(code, 0, "{err}");
     assert!(!out.contains("--security-opt no-new-privileges"), "{out}");
     assert!(out.contains("--security-opt apparmor=unconfined"), "{out}");
+    assert!(out.contains("--device /dev/net/tun"), "{out}");
     assert!(out.contains("--security-opt seccomp="), "{out}");
     assert!(out.contains("-v claude_here-containers-"), "{out}");
     assert!(out.contains("-e DOCKER_HOST=unix:///run/user/"), "{out}");
@@ -334,6 +335,8 @@ fn docker_toolchain_runs_a_nested_container() {
     let extra = vec![
         "--security-opt".to_string(),
         "apparmor=unconfined".to_string(),
+        "--device".to_string(),
+        "/dev/net/tun".to_string(),
         "--security-opt".to_string(),
         format!("seccomp={}", profile.display()),
         "-v".to_string(),
