@@ -65,10 +65,9 @@ itself, and the images use `RUN --mount=type=cache`), and Claude Code on the
 cargo install --git https://github.com/paxel/claude-here
 
 # prebuilt binary into ~/.local/bin (Linux x86_64/aarch64, macOS arm64/x86_64)
-# — available once v0.1.0 is tagged
 curl -fsSL https://github.com/paxel/claude-here/releases/latest/download/install.sh | sh
 
-# Homebrew — available once the formula is published to paxel/homebrew-tap
+# Homebrew on macOS, Linux and inside WSL (the formula is updated on every release)
 brew tap paxel/tap && brew install claude-here
 
 claude_here init
