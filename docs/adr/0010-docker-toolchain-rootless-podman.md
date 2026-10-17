@@ -67,8 +67,10 @@ The run shape relaxes in three places, and only while this toolchain is on:
   entrypoint's own `setpriv`.
 * **A custom seccomp profile replaces Docker's default.** The default allows
   `unshare`, `clone3`, `mount`, `umount2`, `pivot_root`, `setns`,
-  `sethostname` and the new mount API only with `CAP_SYS_ADMIN`, which the
-  sandbox does not have and must not get. The shipped profile is Docker's
+  `sethostname` and the new mount API only with `CAP_SYS_ADMIN`, and
+  `chroot` only with `CAP_SYS_CHROOT`; the sandbox has neither and must not
+  get them. Inside the user namespace the sandbox user owns, the kernel
+  grants these calls on its own; the profile only has to stop refusing them. The shipped profile is Docker's
   default (`images/seccomp-default.json`, a verbatim copy with its origin
   recorded next to it) plus one rule that allows those syscalls
   unconditionally. `unconfined` was rejected: it opens forty more syscalls

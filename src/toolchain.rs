@@ -61,8 +61,10 @@ impl RunNeeds {
 }
 
 /// What rootless podman needs that Docker's default profile reserves for
-/// `CAP_SYS_ADMIN` (namespaces, mounts, the session keyring). Generated into
-/// the profile by `seccomp::profile`; `bpf` is deliberately absent.
+/// `CAP_SYS_ADMIN` (namespaces, mounts, the session keyring) or
+/// `CAP_SYS_CHROOT` (`chroot`: layers are unpacked inside a chroot of the
+/// layer directory). Generated into the profile by `seccomp::profile`; `bpf`
+/// is deliberately absent.
 pub const PODMAN_SYSCALLS: &[&str] = &[
     "unshare",
     "clone",
@@ -81,6 +83,7 @@ pub const PODMAN_SYSCALLS: &[&str] = &[
     "sethostname",
     "setdomainname",
     "keyctl",
+    "chroot",
 ];
 
 /// The toolchain that runs containers inside the sandbox; the entrypoint and
