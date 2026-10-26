@@ -1,5 +1,12 @@
 # claude_here
 
+[![CI](https://github.com/paxel/claude-here/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/paxel/claude-here/actions/workflows/ci.yml)
+[![Security](https://github.com/paxel/claude-here/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/paxel/claude-here/actions/workflows/security.yml)
+[![Release](https://img.shields.io/github/v/release/paxel/claude-here)](https://github.com/paxel/claude-here/releases/latest)
+[![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-success)](https://github.com/paxel/claude-here/blob/main/src/lib.rs)
+[![panic-free](https://img.shields.io/badge/panic--free-linted-success)](https://github.com/paxel/claude-here/blob/main/src/lib.rs)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 Run [Claude Code](https://docs.anthropic.com/en/docs/claude-code) inside a
 project-scoped Docker sandbox — with git modes that are actually enforced, an
 explicit mount and environment allowlist, and a per-session network recording
