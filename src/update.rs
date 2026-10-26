@@ -79,7 +79,7 @@ pub fn pending(paths: &HostPaths) -> Option<String> {
 
 /// Whether the cached answer is old enough to be refreshed.
 pub fn is_stale(cache: Option<&Cache>, now: i64) -> bool {
-    cache.is_none_or(|c| now - c.checked_at >= MAX_AGE_SECS)
+    cache.is_none_or(|c| now.saturating_sub(c.checked_at) >= MAX_AGE_SECS)
 }
 
 /// Ask GitHub for the latest release tag and store it. Every failure is

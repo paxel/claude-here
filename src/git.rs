@@ -86,7 +86,7 @@ fn walk(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
     }
     if depth < MAX_DEPTH {
         for sub in subdirs {
-            walk(&sub, depth + 1, found);
+            walk(&sub, depth.saturating_add(1), found);
         }
     }
 }

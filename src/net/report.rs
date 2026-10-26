@@ -61,7 +61,7 @@ pub fn print_session(files: &SessionFiles) -> Result<()> {
     let mut t = table();
     t.set_header(["host", "ip:port", "conns", "up", "down"]);
     let mut hosts = s.hosts.clone();
-    hosts.sort_by_key(|h| std::cmp::Reverse(h.bytes_in + h.bytes_out));
+    hosts.sort_by_key(|h| std::cmp::Reverse(h.bytes_in.saturating_add(h.bytes_out)));
     for h in hosts {
         t.add_row([
             h.host,
@@ -86,9 +86,9 @@ pub fn print_session(files: &SessionFiles) -> Result<()> {
 
 /// Hosts aggregated over sessions of the last `days`.
 pub fn print_top(dir: &Path, days: u32, project: Option<&Path>, limit: usize) -> Result<()> {
-    let cutoff = now_secs() - i64::from(days) * 86_400;
+    let cutoff = now_secs().saturating_sub(i64::from(days).saturating_mul(86_400));
     let mut agg: BTreeMap<String, (u64, u64, u64, u64)> = BTreeMap::new();
-    let mut sessions = 0;
+    let mut sessions = 0usize;
     for files in list_sessions(dir) {
         if session_start_secs(&files.session_id).is_none_or(|s| s < cutoff) {
             continue;
@@ -101,20 +101,20 @@ pub fn print_top(dir: &Path, days: u32, project: Option<&Path>, limit: usize) ->
         let Some(s) = files.load_summary() else {
             continue;
         };
-        sessions += 1;
+        sessions = sessions.saturating_add(1);
         let mut seen = std::collections::BTreeSet::new();
         for h in &s.hosts {
             let e = agg.entry(h.host.clone()).or_default();
-            e.0 += h.connections;
-            e.1 += h.bytes_out;
-            e.2 += h.bytes_in;
+            e.0 = e.0.saturating_add(h.connections);
+            e.1 = e.1.saturating_add(h.bytes_out);
+            e.2 = e.2.saturating_add(h.bytes_in);
             if seen.insert(h.host.clone()) {
-                e.3 += 1;
+                e.3 = e.3.saturating_add(1);
             }
         }
     }
     let mut rows: Vec<(String, (u64, u64, u64, u64))> = agg.into_iter().collect();
-    rows.sort_by_key(|r| std::cmp::Reverse(r.1.1 + r.1.2));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.1.1.saturating_add(r.1.2)));
     println!(
         "{} session(s) in the last {days} day(s){}",
         sessions,
@@ -142,7 +142,7 @@ pub fn print_grep(dir: &Path, needle: &str) -> Result<()> {
     let needle = needle.to_lowercase();
     let mut t = table();
     t.set_header(["session", "time (UTC)", "project", "match"]);
-    let mut found = 0;
+    let mut found = 0usize;
     for files in list_sessions(dir) {
         let Some(s) = files.load_summary() else {
             continue;
@@ -161,7 +161,7 @@ pub fn print_grep(dir: &Path, needle: &str) -> Result<()> {
                     .map(|q| format!("dns {q}"))
             });
         if let Some(m) = hit {
-            found += 1;
+            found = found.saturating_add(1);
             let project = files
                 .load_info()
                 .map(|i| i.cwd_host.display().to_string())

@@ -119,7 +119,7 @@ pub fn hash_inputs(parts: &[&str]) -> String {
 
 /// Short hash used in project layer tags.
 pub fn short_hash(input: &str) -> String {
-    hash_inputs(&[input])[..8].to_string()
+    hash_inputs(&[input]).chars().take(8).collect()
 }
 
 /// Does a user-supplied Dockerfile contain anything besides comments/blank lines?

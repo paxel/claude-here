@@ -95,19 +95,20 @@ pub fn write_session_info(paths: &HostPaths, info: &SessionInfo) -> Result<()> {
 
 /// Human readable byte count.
 pub fn human_bytes(b: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    if b < 1024 {
+        return format!("{b} B");
+    }
     #[allow(clippy::cast_precision_loss)]
-    let mut v = b as f64;
-    let mut i = 0;
-    while v >= 1024.0 && i < UNITS.len() - 1 {
+    let mut v = b as f64 / 1024.0;
+    let mut unit = "KB";
+    for larger in ["MB", "GB", "TB"] {
+        if v < 1024.0 {
+            break;
+        }
         v /= 1024.0;
-        i += 1;
+        unit = larger;
     }
-    if i == 0 {
-        format!("{b} B")
-    } else {
-        format!("{v:.1} {}", UNITS[i])
-    }
+    format!("{v:.1} {unit}")
 }
 
 /// Move what the container wrote in its own output directory into the log
@@ -120,7 +121,7 @@ pub fn collect_session_output(paths: &HostPaths, session_id: &str) -> Result<usi
     }
     let log = paths.net_log_dir();
     fs::create_dir_all(&log).with_context(|| format!("creating {}", log.display()))?;
-    let mut moved = 0;
+    let mut moved = 0usize;
     if let Ok(entries) = fs::read_dir(&out) {
         for entry in entries.flatten() {
             let from = entry.path();
@@ -133,7 +134,7 @@ pub fn collect_session_output(paths: &HostPaths, session_id: &str) -> Result<usi
                 fs::copy(&from, &to).with_context(|| format!("copying {}", from.display()))?;
                 let _ = fs::remove_file(&from);
             }
-            moved += 1;
+            moved = moved.saturating_add(1);
         }
     }
     let _ = fs::remove_dir(&out);
@@ -166,8 +167,8 @@ pub fn prune(paths: &HostPaths, retention_days: u32) -> Result<usize> {
 }
 
 fn prune_dir(dir: &Path, retention_days: u32, now: i64) -> Result<usize> {
-    let cutoff = now - i64::from(retention_days) * 86_400;
-    let mut removed = 0;
+    let cutoff = now.saturating_sub(i64::from(retention_days).saturating_mul(86_400));
+    let mut removed = 0usize;
     for files in list_sessions(dir) {
         let Some(start) = session_start_secs(&files.session_id) else {
             continue;
@@ -178,7 +179,7 @@ fn prune_dir(dir: &Path, retention_days: u32, now: i64) -> Result<usize> {
                     fs::remove_file(p).with_context(|| format!("removing {}", p.display()))?;
                 }
             }
-            removed += 1;
+            removed = removed.saturating_add(1);
         }
     }
     Ok(removed)

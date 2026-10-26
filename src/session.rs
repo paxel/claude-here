@@ -23,16 +23,31 @@ impl Civil {
     pub fn from_unix(secs: i64) -> Self {
         let days = secs.div_euclid(86_400);
         let rem = secs.rem_euclid(86_400);
-        let z = days + 719_468;
+        // Saturating throughout: real timestamps never come near the limits.
+        let z = days.saturating_add(719_468);
         let era = z.div_euclid(146_097);
         let doe = z.rem_euclid(146_097);
-        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-        let y = yoe + era * 400;
-        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-        let mp = (5 * doy + 2) / 153;
-        let d = doy - (153 * mp + 2) / 5 + 1;
-        let m = if mp < 10 { mp + 3 } else { mp - 9 };
-        let year = if m <= 2 { y + 1 } else { y };
+        let yoe = doe
+            .saturating_sub(doe / 1460)
+            .saturating_add(doe / 36_524)
+            .saturating_sub(doe / 146_096)
+            / 365;
+        let y = yoe.saturating_add(era.saturating_mul(400));
+        let doy = doe.saturating_sub(
+            yoe.saturating_mul(365)
+                .saturating_add(yoe / 4)
+                .saturating_sub(yoe / 100),
+        );
+        let mp = doy.saturating_mul(5).saturating_add(2) / 153;
+        let d = doy
+            .saturating_sub(mp.saturating_mul(153).saturating_add(2) / 5)
+            .saturating_add(1);
+        let m = if mp < 10 {
+            mp.saturating_add(3)
+        } else {
+            mp.saturating_sub(9)
+        };
+        let year = if m <= 2 { y.saturating_add(1) } else { y };
         Self {
             year,
             month: u32::try_from(m).unwrap_or(1),
@@ -90,14 +105,34 @@ pub fn session_start_secs(session_id: &str) -> Option<i64> {
     let minute: i64 = time.get(2..4)?.parse().ok()?;
     let second: i64 = time.get(4..6)?.parse().ok()?;
     // days_from_civil
-    let y = if month <= 2 { year - 1 } else { year };
+    let y = if month <= 2 {
+        year.checked_sub(1)?
+    } else {
+        year
+    };
     let era = y.div_euclid(400);
     let yoe = y.rem_euclid(400);
-    let mp = if month > 2 { month - 3 } else { month + 9 };
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
-    Some(days * 86_400 + hour * 3600 + minute * 60 + second)
+    let mp = if month > 2 {
+        month.checked_sub(3)?
+    } else {
+        month.checked_add(9)?
+    };
+    let doy = (mp.checked_mul(153)?.checked_add(2)? / 5)
+        .checked_add(day)?
+        .checked_sub(1)?;
+    let doe = yoe
+        .checked_mul(365)?
+        .checked_add(yoe / 4)?
+        .checked_sub(yoe / 100)?
+        .checked_add(doy)?;
+    let days = era
+        .checked_mul(146_097)?
+        .checked_add(doe)?
+        .checked_sub(719_468)?;
+    days.checked_mul(86_400)?
+        .checked_add(hour.checked_mul(3600)?)?
+        .checked_add(minute.checked_mul(60)?)?
+        .checked_add(second)
 }
 
 /// Sanitize a directory name for use in a container name.

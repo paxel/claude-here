@@ -114,7 +114,7 @@ pub fn refresh(paths: &HostPaths, channel: &str) -> Option<String> {
 
 /// Whether the cached answer is missing, old, or about another channel.
 pub fn is_stale(cache: Option<&Cache>, channel: &str, now: i64) -> bool {
-    cache.is_none_or(|c| c.channel != channel || now - c.checked_at >= MAX_AGE_SECS)
+    cache.is_none_or(|c| c.channel != channel || now.saturating_sub(c.checked_at) >= MAX_AGE_SECS)
 }
 
 /// Refresh when the cache is stale. Called after a session.

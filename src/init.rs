@@ -241,7 +241,7 @@ fn plugins_need_node(plugins_dir: &Path) -> bool {
                 continue;
             }
             if path.is_dir() {
-                if walk(&path, depth + 1) {
+                if walk(&path, depth.saturating_add(1)) {
                     return true;
                 }
             } else if path

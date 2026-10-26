@@ -758,7 +758,7 @@ fn stage_net_summaries(paths: &HostPaths, session_id: &str, project: &Path) -> R
         fs::remove_dir_all(&view).with_context(|| format!("clearing {}", view.display()))?;
     }
     fs::create_dir_all(&view).with_context(|| format!("creating {}", view.display()))?;
-    let mut staged = 0;
+    let mut staged = 0usize;
     for files in crate::net::list_sessions(&paths.net_log_dir()) {
         let Some(info) = files.load_info() else {
             continue;
@@ -769,7 +769,7 @@ fn stage_net_summaries(paths: &HostPaths, session_id: &str, project: &Path) -> R
         let target = view.join(format!("{}.summary.json", files.session_id));
         fs::copy(&files.summary, &target)
             .with_context(|| format!("copying {}", files.summary.display()))?;
-        staged += 1;
+        staged = staged.saturating_add(1);
     }
     Ok(staged)
 }
