@@ -7,8 +7,13 @@ for all of them (ADR 0009).
 
 ## Trust the company CA
 
-Export the CA as PEM (one certificate or the whole chain) and point the
-configuration at it:
+Export the CA as PEM and point the configuration at it. One path, one file:
+when the company has a root and an issuing CA, or two roots, concatenate
+them; every certificate in the file is trusted.
+
+```sh
+cat root-ca.pem issuing-ca.pem > ~/company/ca.pem
+```
 
 ```toml
 # ~/.config/claude_here/config.toml
@@ -33,6 +38,11 @@ keep their own root store are pointed at it:
 
 Nothing is intercepted and no certificate is generated: the CA is yours, for
 your network.
+
+The image builds get the CA as well: it is baked into the base layer's bundle,
+so the downloads of every layer above it (rustup, Node, GraalVM, Claude Code,
+your own `Dockerfile` lines) verify on that network. The first build after
+setting, changing or removing the CA rebuilds the whole chain.
 
 ## A JVM trust store with more in it
 

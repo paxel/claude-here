@@ -318,15 +318,18 @@ truststore = "~/certs/cacerts"   # pre-built JKS/PKCS12 for the JVM, wired into 
 
 Behind a corporate proxy or against a private registry, `[tls] ca` (or `--ca`)
 is the one line that makes TLS work everywhere inside: the PEM — one
-certificate or a chain — is added to the system bundle at session start, and
-the clients that keep their own root store are pointed at it (Node and Claude
-Code itself via `NODE_EXTRA_CA_CERTS`, `pip`/`requests`/`az` via
-`REQUESTS_CA_BUNDLE` and `PIP_CERT`, `uv` via `UV_NATIVE_TLS`, `aws` and
-`gcloud` via their bundle variables, the JDK via `keytool` into its `cacerts`).
-`curl`, `git`, `cargo`, Go tools, Dart and `podman` read the system bundle and
-need nothing. `truststore` remains for a pre-built JKS with more in it than one
-CA; when both are set it wins for the JVM. Nothing is intercepted: the CA is
-yours, for your network (ADR 0009).
+certificate or a chain, every certificate in it counts — is added to the
+system bundle at session start, and the clients that keep their own root
+store are pointed at it (Node and Claude Code itself via
+`NODE_EXTRA_CA_CERTS`, `pip`/`requests`/`az` via `REQUESTS_CA_BUNDLE` and
+`PIP_CERT`, `uv` via `UV_NATIVE_TLS`, `aws` and `gcloud` via their bundle
+variables, the JDK via `keytool` into its `cacerts`). `curl`, `git`, `cargo`,
+Go tools, Dart and `podman` read the system bundle and need nothing. The
+image builds get the same CA, baked into the base layer, so the downloads
+of every layer work on that network too; a changed CA rebuilds the chain.
+`truststore` remains for a pre-built JKS with more in it than one CA; when
+both are set it wins for the JVM. Nothing is intercepted: the CA is yours,
+for your network (ADR 0009).
 
 ```sh
 claude_here config show                       # merged file view + effective values
