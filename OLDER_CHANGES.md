@@ -1,5 +1,9 @@
 # Older changes
 
+## 0.4.0 (2026-10-17)
+
+* Every release now publishes the Homebrew formula to `paxel/homebrew-tap`, so `brew tap paxel/tap && brew install claude-here` works on macOS, Linux and inside WSL and `brew upgrade` follows new releases.
+
 ## 0.3.0 (2026-10-17)
 
 * `--docker` (alias `--podman`) toolchain: rootless podman inside the sandbox with the `docker` CLI shim and a Docker API socket started by the entrypoint, so testcontainers (`DOCKER_HOST` set, Ryuk disabled as testcontainers documents for rootless podman), `docker build` and `docker run` work without any host daemon being reachable. Nested containers run as the sandbox user in a user namespace and share the sandbox's allowlist, capture and limits. While the toolchain is on, `no-new-privileges` is dropped (the layer strips every setuid bit in the image, fails its build if one is left, and gives `newuidmap`/`newgidmap` file capabilities instead) Docker's default seccomp profile is replaced by the same profile plus the namespace and mount syscalls podman needs, and neither Docker's default AppArmor profile (it denies `mount`) nor its `/proc` masks (a nested container cannot mount its own `/proc` behind them) are applied; the system prompt says so. `/dev/net/tun` is passed through for the nested containers' network (pasta). Image storage is a named volume per project (`claude_here-containers-<sha8>`): new `claude_here volumes [--rm] [--all]`, and `uninstall` removes them. Needs kernel 5.11+. Under the allowlist, Docker Hub, `ghcr.io` and `quay.io` are allowed (ADR 0010).
