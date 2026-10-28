@@ -38,11 +38,8 @@ CA_CRT=/usr/local/share/ca-certificates/claude_here.crt
 if [ -f "${CA_CRT}" ]; then
   update-ca-certificates >/dev/null 2>&1 ||
     echo "claude_here: warning: update-ca-certificates failed; the company CA is not trusted" >&2
-  if [ -x /opt/graalvm/bin/keytool ]; then
-    /opt/graalvm/bin/keytool -importcert -noprompt -cacerts -storepass changeit \
-      -alias claude_here -file "${CA_CRT}" >/dev/null 2>&1 ||
-      echo "claude_here: warning: keytool import failed; the JVM does not trust the company CA" >&2
-  fi
+  /usr/local/lib/claude_here/ca-jvm.sh "${CA_CRT}" >/dev/null 2>&1 ||
+    echo "claude_here: warning: keytool import failed; the JVM does not trust the company CA" >&2
 fi
 
 # Egress allowlist before anything else runs, so nothing slips out first.

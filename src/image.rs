@@ -63,6 +63,7 @@ const NET_SUMMARY: &str = include_str!("../images/net-summary.sh");
 const GIT_SHIM: &str = include_str!("../images/git-shim.sh");
 const CLOUD_SHIM: &str = include_str!("../images/cloud-shim.sh");
 const NET_ALLOWLIST: &str = include_str!("../images/net-allowlist.sh");
+const CA_JVM: &str = include_str!("../images/ca-jvm.sh");
 
 /// Template written to `~/.config/claude_here/Dockerfile` on init.
 pub const USER_DOCKERFILE_TEMPLATE: &str = "\
@@ -222,6 +223,7 @@ impl Builder<'_> {
             GIT_SHIM,
             CLOUD_SHIM,
             NET_ALLOWLIST,
+            CA_JVM,
             &id.user,
             &id.uid.to_string(),
             &id.gid.to_string(),
@@ -238,6 +240,7 @@ impl Builder<'_> {
         ctx.write("git-shim.sh", GIT_SHIM)?;
         ctx.write("cloud-shim.sh", CLOUD_SHIM)?;
         ctx.write("net-allowlist.sh", NET_ALLOWLIST)?;
+        ctx.write("ca-jvm.sh", CA_JVM)?;
         let build_args = vec![
             ("CH_USER".to_string(), id.user.clone()),
             ("CH_UID".to_string(), id.uid.to_string()),
@@ -429,6 +432,7 @@ mod tests {
             "git-shim.sh",
             "cloud-shim.sh",
             "net-allowlist.sh",
+            "ca-jvm.sh",
         ];
         for f in &copied {
             assert!(
@@ -442,7 +446,8 @@ mod tests {
                 "net-summary.sh" => NET_SUMMARY,
                 "git-shim.sh" => GIT_SHIM,
                 "cloud-shim.sh" => CLOUD_SHIM,
-                _ => NET_ALLOWLIST,
+                "net-allowlist.sh" => NET_ALLOWLIST,
+                _ => CA_JVM,
             };
             assert!(!text.is_empty(), "{f} is empty");
             assert!(
@@ -577,6 +582,94 @@ mod tests {
         assert!(ENTRYPOINT.contains("/podman/podman.sock"));
         assert!(ENTRYPOINT.contains("kernel 5.11 or newer"));
         assert!(ENTRYPOINT.contains("kill -TERM \"${PODMAN_PID}\""));
+    }
+
+    /// `keytool -importcert` takes one certificate per call; the script
+    /// splits a chain and imports each certificate under its own alias,
+    /// replacing an alias that exists already. The entrypoint and the jvm
+    /// layer both go through it.
+    #[test]
+    fn ca_jvm_script_imports_every_certificate_of_a_chain() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let script = dir.path().join("ca-jvm.sh");
+        fs::write(&script, CA_JVM)?;
+        let log = dir.path().join("keytool.log");
+        let keytool = dir.path().join("keytool");
+        fs::write(
+            &keytool,
+            format!(
+                "#!/bin/sh\necho \"$@\" >> {}\ncase \"$1\" in -importcert) for a in \"$@\"; do f=\"$a\"; done; cat \"$f\" >> {};; esac\n",
+                log.display(),
+                dir.path().join("imported.pem").display()
+            ),
+        )?;
+        fs::set_permissions(
+            &keytool,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )?;
+        let pem = dir.path().join("ca.pem");
+        fs::write(
+            &pem,
+            "Bag Attributes\n    friendlyName: root\n-----BEGIN CERTIFICATE-----\nAAAA\nBBBB\n-----END CERTIFICATE-----\nsubject=intermediate\n-----BEGIN CERTIFICATE-----\nCCCC\n-----END CERTIFICATE-----\n",
+        )?;
+        let out = std::process::Command::new("sh")
+            .arg(&script)
+            .arg(&pem)
+            .arg(&keytool)
+            .output()?;
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let calls = fs::read_to_string(&log)?;
+        let imports: Vec<&str> = calls
+            .lines()
+            .filter(|l| l.starts_with("-importcert"))
+            .collect();
+        assert_eq!(imports.len(), 2, "{calls}");
+        assert!(imports[0].contains("-alias claude_here-1 "), "{calls}");
+        assert!(imports[1].contains("-alias claude_here-2 "), "{calls}");
+        assert_eq!(
+            calls.lines().filter(|l| l.starts_with("-delete")).count(),
+            2,
+            "{calls}"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("imported.pem"))?,
+            "-----BEGIN CERTIFICATE-----\nAAAA\nBBBB\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nCCCC\n-----END CERTIFICATE-----\n"
+        );
+        assert!(ENTRYPOINT.contains("/usr/local/lib/claude_here/ca-jvm.sh \"${CA_CRT}\""));
+        assert!(!ENTRYPOINT.contains("keytool -importcert"));
+        Ok(())
+    }
+
+    /// Without a keytool the script is a no-op, so the entrypoint can call it
+    /// unconditionally; without a certificate in the file it fails.
+    #[test]
+    fn ca_jvm_script_without_keytool_or_certificate() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let script = dir.path().join("ca-jvm.sh");
+        fs::write(&script, CA_JVM)?;
+        let pem = dir.path().join("ca.pem");
+        fs::write(&pem, "not a certificate\n")?;
+        let missing = dir.path().join("no-keytool");
+        let out = std::process::Command::new("sh")
+            .args([&script, &pem, &missing])
+            .output()?;
+        assert!(out.status.success());
+        let keytool = dir.path().join("keytool");
+        fs::write(&keytool, "#!/bin/sh\nexit 0\n")?;
+        fs::set_permissions(
+            &keytool,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )?;
+        let out = std::process::Command::new("sh")
+            .args([&script, &pem, &keytool])
+            .output()?;
+        assert!(!out.status.success());
+        assert!(String::from_utf8_lossy(&out.stderr).contains("no certificate"));
+        Ok(())
     }
 
     #[test]

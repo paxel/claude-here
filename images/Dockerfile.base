@@ -62,7 +62,7 @@ RUN (getent group "${CH_GID}" >/dev/null || groupadd -g "${CH_GID}" "${CH_USER}"
 # chain (claude.dockerfile), so a new release does not rebuild anything below.
 ENV PATH="/usr/local/lib/claude_here/shims:/home/${CH_USER}/.local/bin:${PATH}"
 
-COPY entrypoint.sh net-summary.sh cloud-shim.sh net-allowlist.sh /usr/local/lib/claude_here/
+COPY entrypoint.sh net-summary.sh cloud-shim.sh net-allowlist.sh ca-jvm.sh /usr/local/lib/claude_here/
 COPY git-shim.sh /usr/local/bin/git
 RUN chmod 755 /usr/local/lib/claude_here/*.sh /usr/local/bin/git
 
