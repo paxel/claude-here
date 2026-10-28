@@ -10,8 +10,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use sha2::{Digest, Sha256};
 
-use crate::docker::Docker;
+use crate::docker::{Build, Docker};
 use crate::paths::HostPaths;
+use crate::run::CA_BUNDLE;
 use crate::toolchain::Toolchain;
 
 /// Image repository name.
@@ -146,6 +147,27 @@ pub fn project_tag(stem: &str, has_user_layer: bool, project_dir: &Path) -> Stri
     )
 }
 
+/// BuildKit secret id under which the base build sees the company CA.
+pub const CA_SECRET: &str = "claude_here_ca";
+
+/// Hash of everything the base layer is built from: the files, the identity
+/// and the company CA, so a changed or removed CA rebuilds the chain.
+pub fn base_hash(id: &Identity, ca: Option<&str>) -> String {
+    hash_inputs(&[
+        DOCKERFILE_BASE,
+        ENTRYPOINT,
+        NET_SUMMARY,
+        GIT_SHIM,
+        CLOUD_SHIM,
+        NET_ALLOWLIST,
+        CA_JVM,
+        &id.user,
+        &id.uid.to_string(),
+        &id.gid.to_string(),
+        ca.unwrap_or(""),
+    ])
+}
+
 /// Orchestrates building the image chain.
 pub struct Builder<'a> {
     pub docker: &'a Docker,
@@ -154,6 +176,10 @@ pub struct Builder<'a> {
     /// Toolchain layers in build order, as returned by `toolchain::resolve`.
     pub toolchains: Vec<&'static Toolchain>,
     pub policy: BuildPolicy,
+    /// `[tls] ca`, expanded: baked into the base layer's bundle so every
+    /// download of every layer works behind a TLS-intercepting proxy
+    /// (ADR 0009). Its content is part of the base hash.
+    pub ca: Option<PathBuf>,
 }
 
 impl Builder<'_> {
@@ -216,18 +242,14 @@ impl Builder<'_> {
     fn ensure_base(&self) -> Result<String> {
         let id = &self.identity;
         let tag = base_tag(&id.uid);
-        let hash = hash_inputs(&[
-            DOCKERFILE_BASE,
-            ENTRYPOINT,
-            NET_SUMMARY,
-            GIT_SHIM,
-            CLOUD_SHIM,
-            NET_ALLOWLIST,
-            CA_JVM,
-            &id.user,
-            &id.uid.to_string(),
-            &id.gid.to_string(),
-        ]);
+        let ca = match &self.ca {
+            Some(p) => Some(
+                fs::read_to_string(p)
+                    .with_context(|| format!("reading the company CA {}", p.display()))?,
+            ),
+            None => None,
+        };
+        let hash = base_hash(id, ca.as_deref());
         if self.is_current(&tag, &hash) && !self.policy.refresh_base {
             return Ok(tag);
         }
@@ -241,18 +263,25 @@ impl Builder<'_> {
         ctx.write("cloud-shim.sh", CLOUD_SHIM)?;
         ctx.write("net-allowlist.sh", NET_ALLOWLIST)?;
         ctx.write("ca-jvm.sh", CA_JVM)?;
-        let build_args = vec![
-            ("CH_USER".to_string(), id.user.clone()),
-            ("CH_UID".to_string(), id.uid.to_string()),
-            ("CH_GID".to_string(), id.gid.to_string()),
-        ];
-        self.docker.build(
-            &ctx.dir,
-            &tag,
-            &build_args,
-            &Self::labels(&hash),
-            self.policy.refresh_base,
-        )?;
+        let mut build = Build {
+            context: ctx.dir.clone(),
+            tag: tag.clone(),
+            build_args: vec![
+                ("CH_USER".to_string(), id.user.clone()),
+                ("CH_UID".to_string(), id.uid.to_string()),
+                ("CH_GID".to_string(), id.gid.to_string()),
+            ],
+            labels: Self::labels(&hash),
+            secrets: Vec::new(),
+            refresh: self.policy.refresh_base,
+        };
+        if let Some(p) = &self.ca {
+            build
+                .build_args
+                .push(("CH_CA_BUNDLE".to_string(), CA_BUNDLE.to_string()));
+            build.secrets.push((CA_SECRET.to_string(), p.clone()));
+        }
+        self.docker.build(&build)?;
         Ok(tag)
     }
 
@@ -265,12 +294,16 @@ impl Builder<'_> {
         eprintln!("claude_here: building {tag}");
         let ctx = BuildContext::new(toolchain.name)?;
         ctx.write("Dockerfile", toolchain.dockerfile)?;
-        let build_args = vec![
-            ("BASE".to_string(), parent.to_string()),
-            ("CH_USER".to_string(), self.identity.user.clone()),
-        ];
-        self.docker
-            .build(&ctx.dir, tag, &build_args, &Self::labels(&hash), false)?;
+        self.docker.build(&Build {
+            context: ctx.dir.clone(),
+            tag: tag.to_string(),
+            build_args: vec![
+                ("BASE".to_string(), parent.to_string()),
+                ("CH_USER".to_string(), self.identity.user.clone()),
+            ],
+            labels: Self::labels(&hash),
+            ..Default::default()
+        })?;
         Ok(tag.to_string())
     }
 
@@ -284,8 +317,12 @@ impl Builder<'_> {
         eprintln!("claude_here: building {tag}");
         let ctx = BuildContext::new("layer")?;
         ctx.write("Dockerfile", &text)?;
-        self.docker
-            .build(&ctx.dir, tag, &[], &Self::labels(&hash), false)?;
+        self.docker.build(&Build {
+            context: ctx.dir.clone(),
+            tag: tag.to_string(),
+            labels: Self::labels(&hash),
+            ..Default::default()
+        })?;
         Ok(tag.to_string())
     }
 
@@ -318,15 +355,19 @@ impl Builder<'_> {
         eprintln!("claude_here: building {tag} (Claude Code {version})");
         let ctx = BuildContext::new("claude")?;
         ctx.write("Dockerfile", DOCKERFILE_CLAUDE)?;
-        let build_args = vec![
-            ("BASE".to_string(), parent.to_string()),
-            ("CH_USER".to_string(), self.identity.user.clone()),
-            ("CLAUDE_VERSION".to_string(), version.clone()),
-        ];
         let mut labels = Self::labels(&hash);
         labels.push((CLAUDE_LABEL.to_string(), version.clone()));
-        self.docker
-            .build(&ctx.dir, &tag, &build_args, &labels, false)?;
+        self.docker.build(&Build {
+            context: ctx.dir.clone(),
+            tag: tag.clone(),
+            build_args: vec![
+                ("BASE".to_string(), parent.to_string()),
+                ("CH_USER".to_string(), self.identity.user.clone()),
+                ("CLAUDE_VERSION".to_string(), version.clone()),
+            ],
+            labels,
+            ..Default::default()
+        })?;
         Ok(tag)
     }
 
@@ -497,7 +538,7 @@ mod tests {
             files.push((t.name, t.dockerfile));
         }
         for (name, text) in files {
-            if !text.contains("--mount=type=cache") {
+            if !text.contains("--mount=type=") {
                 continue;
             }
             assert!(
@@ -564,6 +605,54 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, c);
         assert_eq!(a.len(), 64);
+    }
+
+    /// The company CA is baked into the base layer, so its content is part
+    /// of the base hash: setting, changing or removing it rebuilds the chain.
+    #[test]
+    fn base_hash_follows_the_company_ca() {
+        let id = Identity {
+            user: "ni".into(),
+            uid: 1000,
+            gid: 1000,
+            claude_version: "stable".into(),
+        };
+        let none = base_hash(&id, None);
+        let one = base_hash(&id, Some("-----BEGIN CERTIFICATE-----\nA\n"));
+        let two = base_hash(&id, Some("-----BEGIN CERTIFICATE-----\nB\n"));
+        assert_eq!(none, base_hash(&id, None));
+        assert_ne!(none, one);
+        assert_ne!(one, two);
+    }
+
+    /// The contract between `ensure_base` and `Dockerfile.base`: the secret id
+    /// and the build argument it passes, the path the session mounts the CA
+    /// at, and what the step leaves behind for pip. The jvm layer imports
+    /// the baked CA into its own store through the shared script.
+    #[test]
+    fn base_image_bakes_the_company_ca_from_the_build_secret() {
+        let crt = crate::run::CA_CRT;
+        assert!(DOCKERFILE_BASE.contains(&format!("--mount=type=secret,id={CA_SECRET}")));
+        assert!(DOCKERFILE_BASE.contains(&format!("/run/secrets/{CA_SECRET}")));
+        assert!(DOCKERFILE_BASE.contains(&format!("cp /run/secrets/{CA_SECRET} {crt}")));
+        assert!(DOCKERFILE_BASE.contains("update-ca-certificates"));
+        assert!(DOCKERFILE_BASE.contains(&format!("cert = {CA_BUNDLE}\\n' > /etc/pip.conf")));
+        assert!(
+            DOCKERFILE_BASE.contains("ARG CH_CA_BUNDLE=\nENV NODE_EXTRA_CA_CERTS=${CH_CA_BUNDLE}")
+        );
+        // The CA step must come before the first download of the base.
+        let ca_step = DOCKERFILE_BASE.find("/run/secrets/").unwrap_or(usize::MAX);
+        let first_curl = DOCKERFILE_BASE.find("curl -fsSL").unwrap_or(0);
+        assert!(ca_step < first_curl);
+        let jvm = crate::toolchain::TOOLCHAINS
+            .iter()
+            .find(|t| t.name == "jvm")
+            .map(|t| t.dockerfile)
+            .unwrap_or_default();
+        assert!(jvm.contains(&format!("/usr/local/lib/claude_here/ca-jvm.sh {crt}")));
+        let import = jvm.find("ca-jvm.sh").unwrap_or(0);
+        let graalvm = jvm.find("JAVA_HOME=/opt/graalvm").unwrap_or(usize::MAX);
+        assert!(graalvm < import, "the import needs the JDK");
     }
 
     #[test]

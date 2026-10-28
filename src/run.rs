@@ -813,6 +813,7 @@ pub fn execute(
         },
         toolchains: chain.clone(),
         policy,
+        ca: cfg.ca.as_ref().map(|c| paths.expand_tilde(c)),
     };
     let image_tag = builder.ensure(cfg.image.as_deref(), &project_dir(&facts.cwd))?;
     let mut req = RunRequest {
@@ -916,6 +917,7 @@ pub fn build_reporting(cfg: &Config, paths: &HostPaths, policy: BuildPolicy) -> 
         },
         toolchains: toolchain::resolve(&cfg.toolchains)?,
         policy,
+        ca: cfg.ca.as_ref().map(|c| paths.expand_tilde(c)),
     };
     let dir = project_dir(&facts.cwd);
     let before = builder.final_tag(cfg.image.as_deref(), &dir)?;
@@ -944,6 +946,7 @@ pub fn planned_tag(cfg: &Config, paths: &HostPaths, facts: &HostFacts) -> Result
         },
         toolchains: toolchain::resolve(&cfg.toolchains)?,
         policy: BuildPolicy::default(),
+        ca: cfg.ca.as_ref().map(|c| paths.expand_tilde(c)),
     };
     builder.final_tag(cfg.image.as_deref(), &project_dir(&facts.cwd))
 }

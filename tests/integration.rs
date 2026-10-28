@@ -390,40 +390,59 @@ fn docker_toolchain_runs_a_nested_container() {
     );
 }
 
-/// A throwaway self-signed CA, and the mount that puts it where the root
-/// phase looks (ADR 0009).
-fn itest_ca_mount(dir: &Path) -> Vec<String> {
+/// A throwaway company CA file: two self-signed certificates in one PEM, as
+/// a company bundle with a root and an issuing CA is one file (ADR 0009).
+fn itest_ca_pem(dir: &Path) -> PathBuf {
     let pem = dir.join("ca.pem");
-    let made = Command::new("openssl")
-        .args([
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-days",
-            "1",
-            "-subj",
-            "/CN=claude_here itest CA",
-        ])
-        .arg("-keyout")
-        .arg(dir.join("ca.key"))
-        .arg("-out")
-        .arg(&pem)
-        .output()
-        .unwrap_or_else(|e| panic!("openssl: {e}"));
-    assert!(
-        made.status.success(),
-        "{}",
-        String::from_utf8_lossy(&made.stderr)
-    );
+    let mut bundle = String::new();
+    for (n, cn) in ["claude_here itest root", "claude_here itest issuing"]
+        .iter()
+        .enumerate()
+    {
+        let one = dir.join(format!("ca{n}.pem"));
+        let made = Command::new("openssl")
+            .args([
+                "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj",
+            ])
+            .arg(format!("/CN={cn}"))
+            .arg("-keyout")
+            .arg(dir.join(format!("ca{n}.key")))
+            .arg("-out")
+            .arg(&one)
+            .output()
+            .unwrap_or_else(|e| panic!("openssl: {e}"));
+        assert!(
+            made.status.success(),
+            "{}",
+            String::from_utf8_lossy(&made.stderr)
+        );
+        bundle.push_str(&fs::read_to_string(&one).unwrap_or_default());
+    }
+    fs::write(&pem, bundle).unwrap_or_else(|e| panic!("{e}"));
+    pem
+}
+
+/// The mount that puts the CA file where the root phase looks.
+fn itest_ca_mount(dir: &Path) -> Vec<String> {
+    let pem = itest_ca_pem(dir);
     vec![
         "-v".to_string(),
         format!("{}:{}:ro", pem.display(), claude_here::run::CA_CRT),
     ]
 }
 
-/// A mounted PEM ends up in the system bundle at session start (ADR 0009).
+/// Splits the CA file inside the container and verifies each certificate
+/// against the system bundle: a self-signed one verifies only when the
+/// bundle contains it. Prints `verify=ok` once per certificate.
+const VERIFY_EACH_CA: &str = "mkdir -p /tmp/cas \
+    && awk '/BEGIN CERTIFICATE/{n++} {print > (\"/tmp/cas/\" n \".pem\")}' \
+         /usr/local/share/ca-certificates/claude_here.crt \
+    && for f in /tmp/cas/*.pem; do \
+         openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt \"$f\" >/dev/null \
+         && echo verify=ok; done";
+
+/// A mounted PEM ends up in the system bundle at session start (ADR 0009),
+/// every certificate of it.
 #[test]
 #[ignore = "needs docker"]
 fn ca_is_added_to_the_system_bundle() {
@@ -435,20 +454,60 @@ fn ca_is_added_to_the_system_bundle() {
     let extra = itest_ca_mount(tmp.path());
     let uid = users_uid();
     let image = claude_here::image::base_tag(&uid.0);
-    // A self-signed CA verifies only against a bundle that contains it.
-    let script = "openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt \
-        /usr/local/share/ca-certificates/claude_here.crt && echo verify=ok; \
-        test -L /etc/ssl/certs/claude_here.pem && echo link=ok";
-    let out = entrypoint_run_raw(&image, true, &extra, &[], script);
-    assert!(out.contains("verify=ok"), "{out}");
+    let script =
+        format!("{VERIFY_EACH_CA}; test -L /etc/ssl/certs/claude_here.pem && echo link=ok");
+    let out = entrypoint_run_raw(&image, true, &extra, &[], &script);
+    assert_eq!(out.matches("verify=ok").count(), 2, "{out}");
     assert!(
         out.contains("link=ok"),
         "no bundle symlink for the CA: {out}"
     );
 }
 
+/// With `[tls] ca` set, the base build bakes the CA into the image: the
+/// bundle trusts it without the session mount, pip and npm are pointed at the
+/// bundle, so the downloads of every layer above work behind a proxy.
+#[test]
+#[ignore = "needs docker"]
+fn ca_is_baked_into_the_image_at_build() {
+    let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+    let xdg = config_root(tmp.path());
+    let project = tmp.path().join("proj");
+    fs::create_dir_all(project.join(".claude_here")).ok();
+    let pem = itest_ca_pem(tmp.path());
+    fs::write(
+        project.join(".claude_here/config.toml"),
+        format!("[tls]\nca = \"{}\"\n", pem.display()),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    ensure_base(&xdg, &project);
+    let uid = users_uid();
+    let image = claude_here::image::base_tag(&uid.0);
+    // No mount: only what the image carries.
+    let script = format!(
+        "{VERIFY_EACH_CA}; echo node=$NODE_EXTRA_CA_CERTS; \
+         grep -q 'cert = /etc/ssl/certs/ca-certificates.crt' /etc/pip.conf && echo pip=ok"
+    );
+    let out = entrypoint_run_raw(&image, true, &[], &[], &script);
+    assert_eq!(out.matches("verify=ok").count(), 2, "{out}");
+    assert!(
+        out.contains("node=/etc/ssl/certs/ca-certificates.crt"),
+        "{out}"
+    );
+    assert!(out.contains("pip=ok"), "{out}");
+    // Without the CA the base is stale again and rebuilds without it.
+    fs::remove_file(project.join(".claude_here/config.toml")).ok();
+    ensure_base(&xdg, &project);
+    let script = "test -e /usr/local/share/ca-certificates/claude_here.crt \
+        || echo baked=none; echo node=$NODE_EXTRA_CA_CERTS";
+    let out = entrypoint_run_raw(&image, true, &[], &[], script);
+    assert!(out.contains("baked=none"), "{out}");
+    assert!(out.contains("node=\n"), "{out}");
+}
+
 /// With the jvm layer, the root phase also imports the PEM into the JDK's own
-/// `cacerts`, so Maven and Gradle trust it without `JAVA_TOOL_OPTIONS`.
+/// `cacerts`, every certificate under its own alias, so Maven and Gradle
+/// trust it without `JAVA_TOOL_OPTIONS`.
 #[test]
 #[ignore = "needs docker and the jvm layer (long build)"]
 fn ca_is_imported_into_the_jvm_cacerts() {
@@ -461,12 +520,15 @@ fn ca_is_imported_into_the_jvm_cacerts() {
     let extra = itest_ca_mount(tmp.path());
     let uid = users_uid();
     let image = claude_here::image::chain_tag(uid.0, &["jvm".to_string()]);
-    let script = "keytool -list -cacerts -storepass changeit -alias claude_here \
+    let script = "keytool -list -cacerts -storepass changeit -alias claude_here-1 \
+        && keytool -list -cacerts -storepass changeit -alias claude_here-2 \
         && echo keytool=ok";
     let out = entrypoint_run_raw(&image, true, &extra, &[], script);
     assert!(out.contains("keytool=ok"), "{out}");
     assert!(
-        out.contains("claude_here,") && out.contains("trustedCertEntry"),
+        out.contains("claude_here-1,")
+            && out.contains("claude_here-2,")
+            && out.contains("trustedCertEntry"),
         "{out}"
     );
 }

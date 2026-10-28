@@ -30,6 +30,12 @@ ENV JAVA_HOME=/opt/graalvm \
     GRAALVM_HOME=/opt/graalvm \
     PATH="/opt/graalvm/bin:${PATH}"
 
+# Company CA (ADR 0009): the base layer merged it into the system bundle; the
+# JDK keeps a store of its own, so Maven and Gradle need it there as well.
+RUN if [ -f /usr/local/share/ca-certificates/claude_here.crt ]; then \
+      /usr/local/lib/claude_here/ca-jvm.sh /usr/local/share/ca-certificates/claude_here.crt; \
+    fi
+
 # dlcdn is the Apache CDN and keeps current releases; archive.apache.org is the
 # rate-limited cold storage that has everything. Try fast first.
 RUN ${CH_CURL} -o /tmp/maven.tar.gz \

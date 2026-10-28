@@ -1,6 +1,6 @@
 //! Pure assembly of `docker` command lines plus a thin runner.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
@@ -313,32 +313,47 @@ impl Docker {
     }
 
     /// `docker build` with inherited output.
-    pub fn build(
-        &self,
-        context: &Path,
-        tag: &str,
-        build_args: &[(String, String)],
-        labels: &[(String, String)],
-        refresh: bool,
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec!["build".into(), "-t".into(), tag.into()];
-        if refresh {
-            // An OS refresh (`update --base`). The BuildKit cache mounts keep
-            // the downloaded apt archives, so this re-installs, not re-downloads.
-            args.extend(["--no-cache".into(), "--pull".into()]);
-        }
-        for (k, v) in build_args {
-            args.extend(["--build-arg".into(), format!("{k}={v}")]);
-        }
-        for (k, v) in labels {
-            args.extend(["--label".into(), format!("{k}={v}")]);
-        }
-        args.push(context.display().to_string());
-        let code = self.run_build(&args)?;
+    pub fn build(&self, build: &Build) -> Result<()> {
+        let code = self.run_build(&build.to_args())?;
         if code != 0 {
-            bail!("docker build of {tag} failed (exit {code})");
+            bail!("docker build of {} failed (exit {code})", build.tag);
         }
         Ok(())
+    }
+}
+
+/// One `docker build` invocation.
+#[derive(Debug, Clone, Default)]
+pub struct Build {
+    pub context: PathBuf,
+    pub tag: String,
+    pub build_args: Vec<(String, String)>,
+    pub labels: Vec<(String, String)>,
+    /// BuildKit secrets as `(id, host file)`; a `RUN --mount=type=secret`
+    /// sees the file under `/run/secrets/<id>` for that step only.
+    pub secrets: Vec<(String, PathBuf)>,
+    /// `--no-cache --pull` (`update --base`). The BuildKit cache mounts keep
+    /// the downloaded apt archives, so this re-installs, not re-downloads.
+    pub refresh: bool,
+}
+
+impl Build {
+    pub fn to_args(&self) -> Vec<String> {
+        let mut args: Vec<String> = vec!["build".into(), "-t".into(), self.tag.clone()];
+        if self.refresh {
+            args.extend(["--no-cache".into(), "--pull".into()]);
+        }
+        for (k, v) in &self.build_args {
+            args.extend(["--build-arg".into(), format!("{k}={v}")]);
+        }
+        for (k, v) in &self.labels {
+            args.extend(["--label".into(), format!("{k}={v}")]);
+        }
+        for (id, src) in &self.secrets {
+            args.extend(["--secret".into(), format!("id={id},src={}", src.display())]);
+        }
+        args.push(self.context.display().to_string());
+        args
     }
 }
 
@@ -389,6 +404,41 @@ mod tests {
         let iv = a.iter().position(|x| x.ends_with("/foo")).unwrap_or(0);
         let ig = a.iter().position(|x| x.ends_with(".git:ro")).unwrap_or(0);
         assert!(iv < ig);
+    }
+
+    #[test]
+    fn build_args_carry_secrets_and_end_with_the_context() {
+        let b = Build {
+            context: PathBuf::from("/tmp/ctx"),
+            tag: "claude_here:base-u1000".into(),
+            build_args: vec![("CH_UID".into(), "1000".into())],
+            labels: vec![("claude_here.hash".into(), "abc".into())],
+            secrets: vec![("claude_here_ca".into(), PathBuf::from("/home/axel/ca.pem"))],
+            refresh: true,
+        };
+        assert_eq!(
+            b.to_args(),
+            [
+                "build",
+                "-t",
+                "claude_here:base-u1000",
+                "--no-cache",
+                "--pull",
+                "--build-arg",
+                "CH_UID=1000",
+                "--label",
+                "claude_here.hash=abc",
+                "--secret",
+                "id=claude_here_ca,src=/home/axel/ca.pem",
+                "/tmp/ctx",
+            ]
+        );
+        let plain = Build {
+            context: PathBuf::from("/tmp/ctx"),
+            tag: "t".into(),
+            ..Default::default()
+        };
+        assert_eq!(plain.to_args(), ["build", "-t", "t", "/tmp/ctx"]);
     }
 
     #[test]

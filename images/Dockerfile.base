@@ -42,6 +42,23 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
  && sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
  && locale-gen
 
+# Company CA (ADR 0009), a BuildKit secret that is only passed when `[tls] ca`
+# is set. It is copied to the path the session mounts it at and merged into
+# the system bundle, so every download of this layer and of every layer above
+# (toolchains, the user and project layers, Claude Code) works behind a
+# TLS-intercepting proxy. pip reads /etc/pip.conf; npm reads
+# NODE_EXTRA_CA_CERTS, which the build argument sets to the bundle only with a
+# CA and leaves empty (ignored by Node) without one. Without the secret this
+# step changes nothing.
+ARG CH_CA_BUNDLE=
+ENV NODE_EXTRA_CA_CERTS=${CH_CA_BUNDLE}
+RUN --mount=type=secret,id=claude_here_ca \
+    if [ -s /run/secrets/claude_here_ca ]; then \
+      cp /run/secrets/claude_here_ca /usr/local/share/ca-certificates/claude_here.crt \
+   && update-ca-certificates \
+   && printf '[global]\ncert = /etc/ssl/certs/ca-certificates.crt\n' > /etc/pip.conf; \
+    fi
+
 # termshark for `claude_here net shark`
 RUN arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) ts=x64 ;; arm64) ts=arm64 ;; *) echo "unsupported arch $arch"; exit 1 ;; esac; \
