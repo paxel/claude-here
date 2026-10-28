@@ -43,7 +43,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
  && locale-gen
 
 # Company CA (ADR 0009), a BuildKit secret that is only passed when `[tls] ca`
-# is set. It is copied to the path the session mounts it at and merged into
+# is set. It is installed world-readable (the secret itself is 0400) at the
+# path the session mounts it at and merged into
 # the system bundle, so every download of this layer and of every layer above
 # (toolchains, the user and project layers, Claude Code) works behind a
 # TLS-intercepting proxy. pip reads /etc/pip.conf; npm reads
@@ -54,7 +55,7 @@ ARG CH_CA_BUNDLE=
 ENV NODE_EXTRA_CA_CERTS=${CH_CA_BUNDLE}
 RUN --mount=type=secret,id=claude_here_ca \
     if [ -s /run/secrets/claude_here_ca ]; then \
-      cp /run/secrets/claude_here_ca /usr/local/share/ca-certificates/claude_here.crt \
+      install -m 644 /run/secrets/claude_here_ca /usr/local/share/ca-certificates/claude_here.crt \
    && update-ca-certificates \
    && printf '[global]\ncert = /etc/ssl/certs/ca-certificates.crt\n' > /etc/pip.conf; \
     fi

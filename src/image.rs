@@ -634,7 +634,9 @@ mod tests {
         let crt = crate::run::CA_CRT;
         assert!(DOCKERFILE_BASE.contains(&format!("--mount=type=secret,id={CA_SECRET}")));
         assert!(DOCKERFILE_BASE.contains(&format!("/run/secrets/{CA_SECRET}")));
-        assert!(DOCKERFILE_BASE.contains(&format!("cp /run/secrets/{CA_SECRET} {crt}")));
+        assert!(
+            DOCKERFILE_BASE.contains(&format!("install -m 644 /run/secrets/{CA_SECRET} {crt}"))
+        );
         assert!(DOCKERFILE_BASE.contains("update-ca-certificates"));
         assert!(DOCKERFILE_BASE.contains(&format!("cert = {CA_BUNDLE}\\n' > /etc/pip.conf")));
         assert!(
