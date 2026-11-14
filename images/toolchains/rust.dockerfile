@@ -4,6 +4,7 @@ FROM ${BASE}
 ARG CH_USER=ni
 # rustup-init is checked against the sha256 that static.rust-lang.org
 # publishes next to it before it runs.
+# renovate: datasource=github-tags depName=rust-lang/rustup
 ARG RUSTUP_VERSION=1.29.3
 USER ${CH_USER}
 ENV RUSTUP_HOME=/home/${CH_USER}/.rustup \
