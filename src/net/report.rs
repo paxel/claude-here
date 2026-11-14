@@ -20,9 +20,7 @@ fn table() -> Table {
 }
 
 fn session_time(id: &str) -> String {
-    session_start_secs(id)
-        .map(|s| Civil::from_unix(s).human())
-        .unwrap_or_default()
+    session_start_secs(id).map_or_default(|s| Civil::from_unix(s).human())
 }
 
 /// Detailed view of one session.
@@ -118,9 +116,7 @@ pub fn print_top(dir: &Path, days: u32, project: Option<&Path>, limit: usize) ->
     println!(
         "{} session(s) in the last {days} day(s){}",
         sessions,
-        project
-            .map(|p| format!(" for {}", p.display()))
-            .unwrap_or_default()
+        project.map_or_default(|p| format!(" for {}", p.display()))
     );
     let mut t = table();
     t.set_header(["host", "sessions", "conns", "up", "down"]);
@@ -164,8 +160,7 @@ pub fn print_grep(dir: &Path, needle: &str) -> Result<()> {
             found = found.saturating_add(1);
             let project = files
                 .load_info()
-                .map(|i| i.cwd_host.display().to_string())
-                .unwrap_or_default();
+                .map_or_default(|i| i.cwd_host.display().to_string());
             t.add_row([
                 files.session_id.clone(),
                 session_time(&files.session_id),
@@ -192,8 +187,7 @@ pub fn print_list(dir: &Path, limit: usize) -> Result<()> {
         t.add_row([
             files.session_id.clone(),
             session_time(&files.session_id),
-            info.map(|i| i.cwd_host.display().to_string())
-                .unwrap_or_default(),
+            info.map_or_default(|i| i.cwd_host.display().to_string()),
             s.hosts.len().to_string(),
             human_bytes(s.bytes_out),
             human_bytes(s.bytes_in),

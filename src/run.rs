@@ -266,8 +266,7 @@ pub fn assemble(
 fn container_name(cwd: &Path, session_id: &str) -> String {
     let base = cwd
         .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
+        .map_or_default(|s| s.to_string_lossy().to_string());
     let short = session_id.rsplit('-').next().unwrap_or("x");
     format!("claude_here-{}-{short}", sanitize_name(&base))
 }
@@ -1389,8 +1388,7 @@ mod tests {
             .env
             .iter()
             .find(|(k, _)| k == "CH_NET_ALLOW")
-            .map(|(_, v)| v.clone())
-            .unwrap_or_default();
+            .map_or_default(|(_, v)| v.clone());
         assert!(allow.contains("api.anthropic.com"));
         assert!(allow.contains("static.crates.io"));
         assert!(allow.contains("example.com"));

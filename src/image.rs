@@ -649,8 +649,7 @@ mod tests {
         let jvm = crate::toolchain::TOOLCHAINS
             .iter()
             .find(|t| t.name == "jvm")
-            .map(|t| t.dockerfile)
-            .unwrap_or_default();
+            .map_or_default(|t| t.dockerfile);
         assert!(jvm.contains(&format!("/usr/local/lib/claude_here/ca-jvm.sh {crt}")));
         let import = jvm.find("ca-jvm.sh").unwrap_or(0);
         let graalvm = jvm.find("JAVA_HOME=/opt/graalvm").unwrap_or(usize::MAX);
