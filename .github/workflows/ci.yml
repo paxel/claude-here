@@ -4,23 +4,31 @@ on:
     branches: [main]
   pull_request:
 jobs:
-  check:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       # Keep in sync with rust-toolchain.toml; toolchain bumps are deliberate, separate PRs.
       - uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0 branch
-        with:
-          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+  # The same audit as the weekly security.yml, on every pull request and push
+  # to main, so a vulnerable crate cannot come in unnoticed.
+  cargo-audit:
+    name: Vulnerable crates (cargo audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: cargo audit
+        run: cargo audit
   # The real-image checks: the base and toolchain layers build on the
   # runner's daemon, the entrypoint runs, rootless podman starts inside the
   # sandbox (ADR 0010) and a mounted CA lands in the bundle (ADR 0009).
   integration:
-    needs: check
+    needs: build-and-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
