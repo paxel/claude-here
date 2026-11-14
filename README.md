@@ -147,7 +147,8 @@ cd ~/src/foo && claude_here               # builds claude_here:base-u<uid> once,
 
 # one-shot prompts; everything after the tool flags goes to claude
 claude_here -p "summarize the failing tests"
-claude_here --resume                      # claude's own flags pass straight through
+claude_here --resume                      # claude's own flags pass straight through; with no
+                                          # earlier conversation here it starts a fresh one
 claude_here -- --help                     # claude's help (without -- it is claude_here's)
 
 # toolchains — any combination, one image layer each

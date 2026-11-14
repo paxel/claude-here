@@ -50,6 +50,8 @@ pub struct HostFacts {
     pub cloud_dirs: Vec<PathBuf>,
     /// Whether earlier summaries of this project exist to show.
     pub net_view: bool,
+    /// Whether Claude has an earlier conversation of this project to resume.
+    pub has_conversation: bool,
 }
 
 impl HostFacts {
@@ -61,6 +63,10 @@ impl HostFacts {
             .map(PathBuf::from)
             .filter(|p| p.exists());
         let empty_file = paths.config_dir.join("empty");
+        let conversation = has_conversation(
+            &paths.container_home(),
+            &PathRewriter::new(&paths.home, &cfg.user).rewrite(&cwd),
+        );
         Ok(Self {
             cwd,
             uid,
@@ -75,6 +81,7 @@ impl HostFacts {
             token_file: exists(paths.token_file()),
             empty_file,
             net_view: true,
+            has_conversation: conversation,
             cloud_dirs: toolchain::TOOLCHAINS
                 .iter()
                 .flat_map(|t| t.credentials.iter())
@@ -83,6 +90,67 @@ impl HostFacts {
                 .collect(),
         })
     }
+}
+
+/// The directory name Claude Code keeps a project's conversations under:
+/// the absolute path with every character other than a letter or a digit
+/// replaced by `-`.
+pub fn claude_project_dir_name(cwd: &Path) -> String {
+    cwd.to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
+/// Whether `claude_home` (the container's `~/.claude`) holds a conversation
+/// of the project at container path `cwd`.
+pub fn has_conversation(claude_home: &Path, cwd: &Path) -> bool {
+    let dir = claude_home
+        .join("projects")
+        .join(claude_project_dir_name(cwd));
+    fs::read_dir(dir).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .any(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+    })
+}
+
+/// Claude's resume flags without anything to resume: `--continue`/`-c`, and
+/// `--resume`/`-r` without a session id, are dropped so a fresh session
+/// starts. Returns the arguments and whether a flag was dropped.
+pub fn drop_resume(args: &[String], has_conversation: bool) -> (Vec<String>, bool) {
+    if has_conversation {
+        return (args.to_vec(), false);
+    }
+    let mut kept = Vec::with_capacity(args.len());
+    let mut dropped = false;
+    let mut it = args.iter().peekable();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--continue" | "-c" => dropped = true,
+            "--resume" | "-r" => {
+                // `--resume <id>` names a session: claude decides about that one.
+                match it.peek() {
+                    Some(next) if !next.starts_with('-') => kept.push(a.clone()),
+                    _ => dropped = true,
+                }
+            }
+            _ => kept.push(a.clone()),
+        }
+    }
+    (kept, dropped)
+}
+
+/// `req`'s claude arguments, with resume flags dropped (and a note) when
+/// there is nothing to resume.
+fn resume_args(req: &RunRequest, facts: &HostFacts, warnings: &mut Vec<String>) -> Vec<String> {
+    let (args, dropped) = drop_resume(&req.claude_args, facts.has_conversation);
+    if dropped {
+        warnings.push(
+            "no earlier conversation in this project to resume; starting a fresh session".into(),
+        );
+    }
+    args
 }
 
 /// `gh auth token` on the host, if gh is installed and logged in.
@@ -232,7 +300,8 @@ pub fn assemble(
         serde_json::to_string(&info).context("serializing session info")?,
     ));
 
-    let command = claude_command(req, &info);
+    let claude_args = resume_args(req, facts, &mut warnings);
+    let command = claude_command(req.yolo, &claude_args, &info);
     let spec = RunSpec {
         image: req.image_tag.clone(),
         container_name: container_name(&facts.cwd, &req.session_id),
@@ -344,13 +413,13 @@ fn allowed_domains(cfg: &Config, chain: &[&Toolchain]) -> Vec<String> {
 }
 
 /// `claude` plus the sandbox paragraph appended to its system prompt.
-fn claude_command(req: &RunRequest, info: &SessionInfo) -> Vec<String> {
+fn claude_command(yolo: bool, claude_args: &[String], info: &SessionInfo) -> Vec<String> {
     let mut command = vec!["claude".to_string()];
-    if req.yolo {
+    if yolo {
         command.push("--dangerously-skip-permissions".into());
     }
     command.extend(["--append-system-prompt".to_string(), info.system_prompt()]);
-    command.extend(req.claude_args.iter().cloned());
+    command.extend(claude_args.iter().cloned());
     command
 }
 
@@ -989,6 +1058,7 @@ mod tests {
             empty_file: "/home/axel/.config/claude_here/empty".into(),
             cloud_dirs: vec![],
             net_view: true,
+            has_conversation: true,
         }
     }
 
@@ -1444,6 +1514,65 @@ mod tests {
             a.spec.workdir,
             PathBuf::from("/home/axel/data/development/foo")
         );
+        Ok(())
+    }
+
+    fn strings(s: &[&str]) -> Vec<String> {
+        s.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn project_dir_name_matches_claude_code() {
+        assert_eq!(
+            claude_project_dir_name(Path::new("/home/ni/data/my.proj_x")),
+            "-home-ni-data-my-proj-x"
+        );
+    }
+
+    #[test]
+    fn a_conversation_is_a_jsonl_file_in_the_project_dir() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let cwd = Path::new("/home/ni/p");
+        assert!(!has_conversation(home.path(), cwd), "no projects dir");
+        let dir = home.path().join("projects").join("-home-ni-p");
+        fs::create_dir_all(&dir)?;
+        fs::write(dir.join("notes.txt"), "")?;
+        assert!(!has_conversation(home.path(), cwd), "only jsonl counts");
+        fs::write(dir.join("0b1c.jsonl"), "{}")?;
+        assert!(has_conversation(home.path(), cwd));
+        assert!(!has_conversation(home.path(), Path::new("/home/ni/other")));
+        Ok(())
+    }
+
+    #[test]
+    fn resume_flags_are_dropped_only_without_a_conversation() {
+        let args = strings(&["--resume", "--model", "opus", "-c", "--continue", "-r"]);
+        assert_eq!(drop_resume(&args, true), (args.clone(), false));
+        assert_eq!(
+            drop_resume(&args, false),
+            (strings(&["--model", "opus"]), true)
+        );
+        let with_id = strings(&["--resume", "0b1c", "-r", "abcd"]);
+        assert_eq!(drop_resume(&with_id, false), (with_id.clone(), false));
+        let plain = strings(&["-p", "hi"]);
+        assert_eq!(drop_resume(&plain, false), (plain.clone(), false));
+    }
+
+    #[test]
+    fn nothing_to_resume_starts_fresh_with_a_note() -> Result<()> {
+        let mut f = facts();
+        f.has_conversation = false;
+        let mut r = req();
+        r.claude_args = strings(&["--resume"]);
+        let a = assemble(&cfg(ConfigFile::default()), &paths(), &f, &git(), &r)?;
+        assert!(!a.spec.command.contains(&"--resume".to_string()));
+        assert!(
+            a.warnings
+                .iter()
+                .any(|w| w.contains("no earlier conversation"))
+        );
+        let kept = assemble(&cfg(ConfigFile::default()), &paths(), &facts(), &git(), &r)?;
+        assert!(kept.spec.command.contains(&"--resume".to_string()));
         Ok(())
     }
 }
