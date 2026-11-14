@@ -309,17 +309,17 @@ fn net_command(paths: &HostPaths, action: NetAction) -> Result<()> {
     let cfg = load_config(paths, ConfigFile::default())?;
     let dir = paths.net_log_dir();
     match action {
-        NetAction::Last => {
+        NetAction::Last { all } => {
             let Some(files) = net::list_sessions(&dir).into_iter().next() else {
                 bail!("no recorded sessions");
             };
             ensure_summaries([&files]);
-            net::report::print_session(&files)
+            net::report::print_session(&files, all)
         }
-        NetAction::Show { session_id } => {
+        NetAction::Show { session_id, all } => {
             let files = net::SessionFiles::new(&dir, &session_id);
             ensure_summaries([&files]);
-            net::report::print_session(&files)
+            net::report::print_session(&files, all)
         }
         NetAction::Top {
             days,

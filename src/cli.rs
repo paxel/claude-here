@@ -390,9 +390,18 @@ pub struct NetArgs {
 #[derive(Debug, Subcommand)]
 pub enum NetAction {
     /// Summary of the most recent session.
-    Last,
+    Last {
+        /// Every host and every plain HTTP request, not only the busiest.
+        #[arg(long)]
+        all: bool,
+    },
     /// Summary of one session.
-    Show { session_id: String },
+    Show {
+        session_id: String,
+        /// Every host and every plain HTTP request, not only the busiest.
+        #[arg(long)]
+        all: bool,
+    },
     /// Hosts aggregated across sessions.
     Top {
         /// Look back this many days.

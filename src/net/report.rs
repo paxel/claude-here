@@ -27,14 +27,61 @@ fn session_time(id: &str) -> String {
 /// Detailed view of one session.
 /// What was rendered before an error is printed too, as the header of the
 /// "no data" case.
-pub fn print_session(files: &SessionFiles) -> Result<()> {
+pub fn print_session(files: &SessionFiles, all: bool) -> Result<()> {
     let mut out = String::new();
-    let result = render_session(files, &mut out);
+    let result = render_session(files, all, &mut out);
     print!("{out}");
     result
 }
 
-fn render_session(files: &SessionFiles, out: &mut String) -> Result<()> {
+/// Rows of the session view before `--all`.
+const SESSION_ROWS: usize = 20;
+
+/// One host of a session: every endpoint it was reached on, merged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HostRow {
+    host: String,
+    /// `ip:port` when there was one endpoint, else how many.
+    endpoints: String,
+    connections: u64,
+    bytes_out: u64,
+    bytes_in: u64,
+}
+
+/// Merge the per-endpoint entries of a summary into one row per host, the
+/// busiest first; ties keep the host names in order.
+fn host_rows(hosts: &[HostEntry]) -> Vec<HostRow> {
+    let mut merged: BTreeMap<&str, (Vec<String>, u64, u64, u64)> = BTreeMap::new();
+    for h in hosts {
+        let e = merged.entry(h.host.as_str()).or_default();
+        let endpoint = format!("{}:{}", h.ip, h.port);
+        if !e.0.contains(&endpoint) {
+            e.0.push(endpoint);
+        }
+        e.1 = e.1.saturating_add(h.connections);
+        e.2 = e.2.saturating_add(h.bytes_out);
+        e.3 = e.3.saturating_add(h.bytes_in);
+    }
+    let mut rows: Vec<HostRow> = merged
+        .into_iter()
+        .map(
+            |(host, (endpoints, connections, bytes_out, bytes_in))| HostRow {
+                host: host.to_string(),
+                endpoints: match endpoints.as_slice() {
+                    [one] => one.clone(),
+                    many => format!("{} endpoints", many.len()),
+                },
+                connections,
+                bytes_out,
+                bytes_in,
+            },
+        )
+        .collect();
+    rows.sort_by_key(|r| std::cmp::Reverse(r.bytes_in.saturating_add(r.bytes_out)));
+    rows
+}
+
+fn render_session(files: &SessionFiles, all: bool, out: &mut String) -> Result<()> {
     let info = files.load_info();
     let summary = files.load_summary();
     writeln!(
@@ -72,24 +119,32 @@ fn render_session(files: &SessionFiles, out: &mut String) -> Result<()> {
         s.dns_queries.len(),
         if s.dns_queries.len() == 1 { "y" } else { "ies" }
     )?;
+    let rows = host_rows(&s.hosts);
+    let shown = if all { rows.len() } else { SESSION_ROWS };
     let mut t = table();
-    t.set_header(["host", "ip:port", "conns", "up", "down"]);
-    let mut hosts = s.hosts.clone();
-    hosts.sort_by_key(|h| std::cmp::Reverse(h.bytes_in.saturating_add(h.bytes_out)));
-    for h in hosts {
+    t.set_header(["host", "endpoint", "conns", "up", "down"]);
+    for r in rows.iter().take(shown) {
         t.add_row([
-            h.host,
-            format!("{}:{}", h.ip, h.port),
-            h.connections.to_string(),
-            human_bytes(h.bytes_out),
-            human_bytes(h.bytes_in),
+            r.host.clone(),
+            r.endpoints.clone(),
+            r.connections.to_string(),
+            human_bytes(r.bytes_out),
+            human_bytes(r.bytes_in),
         ]);
     }
     writeln!(out, "{t}")?;
-    if !s.http_requests.is_empty() {
-        writeln!(out, "plain HTTP requests:")?;
-        for r in &s.http_requests {
-            writeln!(out, "  {r}")?;
+    let hidden = rows.len().saturating_sub(shown);
+    if hidden > 0 {
+        writeln!(out, "+{hidden} more host(s) (`--all`)")?;
+    }
+    match (s.http_requests.len(), all) {
+        (0, _) => {}
+        (n, false) => writeln!(out, "plain HTTP requests: {n} (`--all` lists them)")?,
+        (_, true) => {
+            writeln!(out, "plain HTTP requests:")?;
+            for r in &s.http_requests {
+                writeln!(out, "  {r}")?;
+            }
         }
     }
     if files.pcap.exists() {
@@ -333,8 +388,12 @@ mod tests {
     }
 
     fn session(files: &SessionFiles) -> Result<String> {
+        session_view(files, false)
+    }
+
+    fn session_view(files: &SessionFiles, all: bool) -> Result<String> {
         let mut out = String::new();
-        render_session(files, &mut out)?;
+        render_session(files, all, &mut out)?;
         Ok(out)
     }
 
@@ -382,7 +441,10 @@ mod tests {
         assert!(out.contains("YOLO"));
         assert!(out.contains("10 packets, 2.0 KB up / 4.0 KB down, 1 dns query\n"));
         assert!(out.contains("10.0.0.2:443"));
-        assert!(out.contains("plain HTTP requests:\n  GET http://plain.example/"));
+        assert!(out.contains("plain HTTP requests: 1 (`--all` lists them)"));
+        assert!(!out.contains("GET http://plain.example/"));
+        let all = session_view(&files, true)?;
+        assert!(all.contains("plain HTTP requests:\n  GET http://plain.example/"));
         assert!(out.contains(&format!("pcap     {}", files.pcap.display())));
         let big = out.find("big.example").unwrap_or(usize::MAX);
         let small = out.find("small.example").unwrap_or(0);
@@ -408,7 +470,7 @@ mod tests {
         write_info(dir.path(), &info(id, "/home/axel/p"))?;
         let files = SessionFiles::new(dir.path(), id);
         let mut out = String::new();
-        let err = render_session(&files, &mut out)
+        let err = render_session(&files, false, &mut out)
             .err()
             .map(|e| e.to_string());
         assert_eq!(
@@ -416,7 +478,7 @@ mod tests {
             Some("no data for session 20261110-120000-aaaa")
         );
         assert!(out.contains("project  /home/axel/p"), "header kept: {out}");
-        let printed = print_session(&files).err().map(|e| e.to_string());
+        let printed = print_session(&files, false).err().map(|e| e.to_string());
         assert_eq!(printed, err);
         Ok(())
     }
@@ -581,6 +643,58 @@ mod tests {
     }
 
     #[test]
+    fn hosts_merge_their_endpoints_into_one_row() {
+        let rows = host_rows(&[
+            host("cdn.example", "10.0.0.1", 2, 100, 1000),
+            host("cdn.example", "10.0.0.2", 1, 50, 500),
+            host("cdn.example", "10.0.0.1", 1, 1, 1),
+            host("api.example", "10.0.0.9", 4, 1, 1),
+        ]);
+        assert_eq!(
+            rows,
+            vec![
+                HostRow {
+                    host: "cdn.example".into(),
+                    endpoints: "2 endpoints".into(),
+                    connections: 4,
+                    bytes_out: 151,
+                    bytes_in: 1501,
+                },
+                HostRow {
+                    host: "api.example".into(),
+                    endpoints: "10.0.0.9:443".into(),
+                    connections: 4,
+                    bytes_out: 1,
+                    bytes_in: 1,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn session_shows_the_busiest_hosts_until_all() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let id = "20261110-120000-aaaa";
+        let hosts = (0..25u64)
+            .map(|i| host(&format!("h{i:02}.example"), "10.0.0.1", 1, i, i))
+            .collect();
+        write_summary(dir.path(), &summary(id, hosts, &[]))?;
+        let files = SessionFiles::new(dir.path(), id);
+
+        let top = session_view(&files, false)?;
+        assert!(top.contains("h24.example"), "busiest shown");
+        assert!(top.contains("h05.example"));
+        assert!(!top.contains("h04.example"), "21st and later hidden");
+        assert!(top.contains("+5 more host(s) (`--all`)"));
+        assert!(!top.contains("plain HTTP"), "no requests, no line");
+
+        let all = session_view(&files, true)?;
+        assert!(all.contains("h00.example"));
+        assert!(!all.contains("more host"));
+        Ok(())
+    }
+
+    #[test]
     fn printers_write_what_they_render() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let id = "20261112-000000-aaaa";
@@ -590,7 +704,7 @@ mod tests {
         )?;
         let files = SessionFiles::new(dir.path(), id);
         fs::write(&files.pcap, "")?;
-        print_session(&files)?;
+        print_session(&files, true)?;
         print_top(dir.path(), 7, None, 10)?;
         print_grep(dir.path(), "a.example")?;
         print_list(dir.path(), 10)?;
