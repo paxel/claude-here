@@ -1,0 +1,8 @@
+{
+  "name": "claude-here-pyright",
+  "private": true,
+  "description": "Pyright for the python toolchain, installed with npm ci from the lockfile.",
+  "dependencies": {
+    "pyright": "1.1.414"
+  }
+}

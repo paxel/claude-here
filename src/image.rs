@@ -286,7 +286,12 @@ impl Builder<'_> {
     }
 
     fn ensure_toolchain(&self, tag: &str, toolchain: &Toolchain, parent: &str) -> Result<String> {
-        let hash = hash_inputs(&[&self.parent_id(parent)?, toolchain.dockerfile]);
+        let parent_id = self.parent_id(parent)?;
+        let mut inputs: Vec<&str> = vec![&parent_id, toolchain.dockerfile];
+        for (name, content) in toolchain.files {
+            inputs.extend([*name, *content]);
+        }
+        let hash = hash_inputs(&inputs);
         if self.is_current(tag, &hash) {
             return Ok(tag.to_string());
         }
@@ -294,6 +299,9 @@ impl Builder<'_> {
         eprintln!("claude_here: building {tag}");
         let ctx = BuildContext::new(toolchain.name)?;
         ctx.write("Dockerfile", toolchain.dockerfile)?;
+        for (name, content) in toolchain.files {
+            ctx.write(name, content)?;
+        }
         self.docker.build(&Build {
             context: ctx.dir.clone(),
             tag: tag.to_string(),
@@ -570,14 +578,18 @@ mod tests {
     fn claude_is_installed_by_its_own_layer_only() {
         assert!(!DOCKERFILE_BASE.contains("install.sh"));
         assert!(!DOCKERFILE_BASE.contains("CLAUDE_VERSION"));
-        assert!(DOCKERFILE_CLAUDE.contains("claude.ai/install.sh"));
+        assert!(DOCKERFILE_CLAUDE.contains("downloads.claude.ai/claude-code-releases"));
         // ARGs before FROM are out of scope after it; these must follow it.
         let (_, after_from) = DOCKERFILE_CLAUDE
             .split_once("FROM ${BASE}")
             .unwrap_or_default();
         assert!(after_from.contains("ARG CLAUDE_VERSION"));
         assert!(after_from.contains("ARG CH_USER"));
-        assert!(after_from.contains("bash -s -- \"${CLAUDE_VERSION}\""));
+        assert!(after_from.contains("version=\"${CLAUDE_VERSION}\""));
+        assert!(
+            after_from.contains("sha256sum -c -"),
+            "binary checked before it runs"
+        );
         // Installed as the sandbox user; the image ends as root for the entrypoint.
         assert!(after_from.contains("USER ${CH_USER}"));
         assert_eq!(

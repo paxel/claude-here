@@ -9,8 +9,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update \
  && apt-get install -y --no-install-recommends \
       cmake ninja-build gdb clang clangd clang-format clang-tidy valgrind
+# Conan and its dependencies, with hashes, from requirements.txt.
+COPY requirements.txt /opt/conan-requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     python3 -m venv /opt/conan \
- && /opt/conan/bin/pip install conan \
+ && /opt/conan/bin/pip install --require-hashes --no-deps -r /opt/conan-requirements.txt \
  && ln -s /opt/conan/bin/conan /usr/local/bin/conan \
  && cmake --version && ninja --version && clangd --version && conan --version
