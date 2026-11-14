@@ -1,0 +1,92 @@
+name: Quality
+on:
+  # Pushes only to main, which takes nothing but PR merges. Every other branch
+  # is tested by its PR run, which tests the merge of the branch into its base:
+  # with up-to-date branches required, that is the tree the merge puts on main.
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["**"]
+# A newer push or PR update cancels the older run of the same branch. The
+# group names the bare branch: head_ref is bare on PR events, ref_name (not
+# ref, which is refs/heads/…) on pushes.
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+# The token only reads the code: no job writes to the repository.
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+jobs:
+  rust-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Keep in sync with rust-toolchain.toml; toolchain bumps are deliberate, separate PRs.
+      - uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0 branch
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Formatting
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        with:
+          tool: cargo-tarpaulin
+      # Ratchet rule (see CLAUDE.md): the floor is the measured coverage minus
+      # 2; when coverage rises, raise --fail-under in the same PR. Never lower it.
+      # Floor set 2026-11-14 from 54.97% measured on the 0.5.0 pull request.
+      # The LCOV file is for the sonar job, which downloads it.
+      - name: Coverage
+        run: cargo tarpaulin --out Xml --out Lcov --fail-under 52.97
+      - name: Upload the coverage for SonarQube Cloud
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-lcov
+          path: lcov.info
+          if-no-files-found: ignore
+          retention-days: 7
+  # SonarQube Cloud analysis of main; the free plan analyses the main branch
+  # only. Report only: the quality gate shows on
+  # https://sonarcloud.io/summary/new_code?id=paxel_claude-here and fails no
+  # build. What is analysed is in sonar-project.properties.
+  #
+  # Only pushes to main run it, so the token never meets code from a pull
+  # request, and it analyses the commit this run checked out. It runs after
+  # rust-quality, also when that failed, and takes its LCOV file from this run;
+  # without one the scan has no coverage.
+  #
+  # One-time setup: Automatic Analysis off in the project paxel_claude-here on
+  # SonarQube Cloud, and the repository secret SQ_TOKEN.
+  sonar:
+    name: SonarQube Cloud analysis
+    needs: [rust-quality]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      # The full history for the blame and the new-code period.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # Keep in sync with rust-toolchain.toml; toolchain bumps are deliberate, separate PRs.
+      - uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0 branch
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Clippy report for the analyzer
+        run: |
+          mkdir -p build
+          cargo clippy --all-targets --locked --message-format=json > build/clippy-report.json
+      - name: Rust coverage from rust-quality
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-lcov
+          path: build
+      - uses: SonarSource/sonarqube-scan-action@4d1dc0c91ee400dcf8a6dddf2f705ac36542e304 # v8.4.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SQ_TOKEN }}
