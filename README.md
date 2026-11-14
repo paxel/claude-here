@@ -231,7 +231,7 @@ RUN npm install -g @anthropic-ai/mcp-inspector
 | `--docker-arg ARG` | Raw `docker run` argument. Repeatable |
 | `--ca PATH` | Company CA (PEM) trusted by every client in the container (see Configuration) |
 | `--memory 8g`, `--cpus 4` | Resource limits (none by default) |
-| `--no-net-log` | Skip network capture for this run |
+| `--net-log`, `--no-net-log` | Record / do not record this run's network traffic (off by default) |
 | `--rebuild`, `--no-build` | Force image rebuild / fail instead of building |
 | `--save`, `--save-global` | Persist the given flags into project / global config |
 | `--i-know` | Required for `claude_yolo` together with `--git full` |
@@ -523,8 +523,8 @@ allowed — there is deliberately no bypass — and `claude plugin install` need
 
 ### Network recording
 
-Every session (unless `--no-net-log` / `net_capture = false` / host
-networking) leaves `~/.config/claude_here/logs/net/<session>.pcap`,
+Recording is off by default. With `net_capture = true` in a config or
+`--net-log` (and no host networking), a session leaves `~/.config/claude_here/logs/net/<session>.pcap`,
 `.summary.json` and `.session.json`. Captures are truncated to 512 bytes per
 packet (enough for DNS, TLS SNI and HTTP headers; byte counts stay exact) and
 pruned after `net_retention_days` (90).
