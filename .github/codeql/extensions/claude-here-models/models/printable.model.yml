@@ -1,0 +1,18 @@
+# Values that rust/cleartext-logging takes for secrets because of their names,
+# but that are labels meant to be shown. The query stops at the return value
+# of these functions; everything else keeps its full checks, so a value that
+# is printed without going through them is reported again.
+#
+# - image::base_tag: every image tag starts from it; the "uid" in a tag is the
+#   host's numeric unix uid.
+# - session::printable_session_id: a session id is a UTC timestamp and 4 hex
+#   digits.
+#
+# src/session.rs tests that every function named here still exists.
+extensions:
+  - addsTo:
+      pack: codeql/rust-all
+      extensible: barrierModel
+    data:
+      - ["claude_here::image::base_tag", "ReturnValue", "log-injection", "manual"]
+      - ["claude_here::session::printable_session_id", "ReturnValue", "log-injection", "manual"]

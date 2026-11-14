@@ -11,7 +11,7 @@ use super::{HostEntry, SessionFiles, Summary, human_bytes, list_sessions};
 use crate::config::Config;
 use crate::docker::Docker;
 use crate::paths::HostPaths;
-use crate::session::{Civil, now_secs, session_start_secs};
+use crate::session::{Civil, now_secs, printable_session_id, session_start_secs};
 
 fn table() -> Table {
     let mut t = Table::new();
@@ -40,7 +40,7 @@ fn render_session(files: &SessionFiles, out: &mut String) -> Result<()> {
     writeln!(
         out,
         "session  {}  ({} UTC)",
-        files.session_id,
+        printable_session_id(&files.session_id),
         session_time(&files.session_id)
     )?;
     if let Some(i) = &info {
@@ -58,7 +58,10 @@ fn render_session(files: &SessionFiles, out: &mut String) -> Result<()> {
             writeln!(out, "no summary; capture at {}", files.pcap.display())?;
             return Ok(());
         }
-        bail!("no data for session {}", files.session_id);
+        bail!(
+            "no data for session {}",
+            printable_session_id(&files.session_id)
+        );
     };
     writeln!(
         out,
@@ -194,7 +197,7 @@ fn render_grep(dir: &Path, needle: &str) -> Result<String> {
                 .load_info()
                 .map_or_default(|i| i.cwd_host.display().to_string());
             t.add_row([
-                files.session_id.clone(),
+                printable_session_id(&files.session_id).to_string(),
                 session_time(&files.session_id),
                 project,
                 m,
@@ -223,7 +226,7 @@ fn render_list(dir: &Path, limit: usize) -> Result<String> {
         let info = files.load_info();
         let s: Summary = files.load_summary().unwrap_or_default();
         t.add_row([
-            files.session_id.clone(),
+            printable_session_id(&files.session_id).to_string(),
             session_time(&files.session_id),
             info.map_or_default(|i| i.cwd_host.display().to_string()),
             s.hosts.len().to_string(),
