@@ -80,8 +80,8 @@ impl<R: DockerRun> Builder<'_, R> {
         let work = dir.join(format!(".summary-{}", files.session_id));
         fs::create_dir_all(&work).with_context(|| format!("creating {}", work.display()))?;
         eprintln!(
-            "claude_here: building the network summary of {} from its capture",
-            files.session_id
+            "claude_here: building the network summary from {}",
+            files.pcap.display()
         );
         let result = self.build_into(files, &work);
         let _ = fs::remove_dir_all(&work);
