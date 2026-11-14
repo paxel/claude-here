@@ -87,10 +87,11 @@ pub fn run(paths: &HostPaths, args: &InitArgs) -> Result<()> {
         .unwrap_or_else(|| DEFAULT_USER.to_string());
     seed_home(paths, &user, &args.seed, args.reseed)?;
 
+    let config_home = xdg_config_home(paths);
     if !args.no_shell {
-        install_fish_completions(paths)?;
+        install_fish_completions(&config_home)?;
     }
-    offer_global_gitignore(paths, args.yes)?;
+    offer_global_gitignore(&config_home, args.yes)?;
     println!("done. Try: cd <project> && claude_here");
     Ok(())
 }
@@ -408,11 +409,13 @@ pub fn copy_tree(src: &Path, dest: &Path, rw: &PathRewriter) -> Result<()> {
     Ok(())
 }
 
-fn install_fish_completions(paths: &HostPaths) -> Result<()> {
-    let fish_dir = std::env::var_os("XDG_CONFIG_HOME")
-        .map_or_else(|| paths.home.join(".config"), PathBuf::from)
-        .join("fish")
-        .join("completions");
+/// `$XDG_CONFIG_HOME`, or `~/.config`.
+fn xdg_config_home(paths: &HostPaths) -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME").map_or_else(|| paths.home.join(".config"), PathBuf::from)
+}
+
+fn install_fish_completions(config_home: &Path) -> Result<()> {
+    let fish_dir = config_home.join("fish").join("completions");
     if !fish_dir.parent().is_some_and(Path::exists) {
         return Ok(());
     }
@@ -428,11 +431,8 @@ fn install_fish_completions(paths: &HostPaths) -> Result<()> {
     Ok(())
 }
 
-fn offer_global_gitignore(paths: &HostPaths, yes: bool) -> Result<()> {
-    let ignore = std::env::var_os("XDG_CONFIG_HOME")
-        .map_or_else(|| paths.home.join(".config"), PathBuf::from)
-        .join("git")
-        .join("ignore");
+fn offer_global_gitignore(config_home: &Path, yes: bool) -> Result<()> {
+    let ignore = config_home.join("git").join("ignore");
     let existing = fs::read_to_string(&ignore).unwrap_or_default();
     if existing
         .lines()
@@ -600,6 +600,98 @@ mod tests {
             fs::Permissions::from_mode(0o444),
         )?;
         copy_tree(&src, &dest, &PathRewriter::new("/home/axel", "ni"))?;
+        Ok(())
+    }
+
+    fn init_args(token: Option<&str>) -> InitArgs {
+        InitArgs {
+            token: token.map(str::to_string),
+            token_stdin: false,
+            no_token: false,
+            seed: vec!["settings.json".into(), "skills".into(), "missing".into()],
+            reseed: false,
+            no_shell: true,
+            yes: true,
+        }
+    }
+
+    #[test]
+    fn the_token_is_written_and_then_kept() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let paths = HostPaths::new(tmp.path().join("home"), tmp.path().join("cfg"));
+        fs::create_dir_all(&paths.config_dir)?;
+        let token = "sk-ant-oat01-abcdefghijklmnopqrstuvwxyz0123456789";
+        setup_token(&paths, &init_args(Some(token)))?;
+        let written = fs::read_to_string(paths.token_file())?;
+        assert!(written.contains(token));
+        assert!(token_file_valid(&paths.token_file()));
+        // A valid file is kept when no new token is given.
+        setup_token(&paths, &init_args(None))?;
+        assert_eq!(fs::read_to_string(paths.token_file())?, written);
+        let empty = setup_token(&paths, &init_args(Some("  ")))
+            .err()
+            .map_or_default(|e| e.to_string());
+        assert_eq!(empty, "empty token");
+        Ok(())
+    }
+
+    #[test]
+    fn the_home_is_seeded_once_from_the_host_claude_dir() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let home = tmp.path().join("home");
+        let paths = HostPaths::new(home.clone(), tmp.path().join("cfg"));
+        fs::create_dir_all(home.join(".claude/skills/a"))?;
+        fs::write(home.join(".claude/settings.json"), "{\"x\": 1}")?;
+        fs::write(home.join(".claude/skills/a/SKILL.md"), "skill")?;
+        fs::create_dir_all(paths.container_home())?;
+        let items = init_args(None).seed;
+        seed_home(&paths, "ni", &items, false)?;
+        let dest = paths.container_home();
+        assert!(dest.join("settings.json").exists());
+        assert!(dest.join("skills/a/SKILL.md").exists());
+        assert_eq!(
+            fs::read_to_string(dest.join(SEED_MARKER))?,
+            "settings.json,skills\n"
+        );
+
+        // Seeded once; a second run keeps the container's own changes.
+        fs::write(dest.join("settings.json"), "{\"mine\": true}")?;
+        seed_home(&paths, "ni", &items, false)?;
+        assert_eq!(
+            fs::read_to_string(dest.join("settings.json"))?,
+            "{\"mine\": true}"
+        );
+        seed_home(&paths, "ni", &items, true)?;
+        assert_eq!(
+            fs::read_to_string(dest.join("settings.json"))?,
+            "{\"x\": 1}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn completions_and_gitignore_go_into_the_config_home() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let config_home = tmp.path().join(".config");
+        install_fish_completions(&config_home)?;
+        assert!(
+            !config_home.join("fish").exists(),
+            "no fish, nothing written"
+        );
+        fs::create_dir_all(config_home.join("fish"))?;
+        install_fish_completions(&config_home)?;
+        assert!(
+            config_home
+                .join("fish/completions/claude_yolo.fish")
+                .exists()
+        );
+
+        let ignore = config_home.join("git/ignore");
+        fs::create_dir_all(config_home.join("git"))?;
+        fs::write(&ignore, "target")?;
+        offer_global_gitignore(&config_home, true)?;
+        offer_global_gitignore(&config_home, true)?;
+        assert_eq!(fs::read_to_string(&ignore)?, "target\n.claude_here/\n");
         Ok(())
     }
 }

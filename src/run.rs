@@ -1575,4 +1575,61 @@ mod tests {
         assert!(kept.spec.command.contains(&"--resume".to_string()));
         Ok(())
     }
+
+    #[test]
+    fn host_dirs_are_prepared_for_an_assembled_run() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let home = tmp.path().join("home");
+        let paths = HostPaths::new(home.clone(), home.join(".config/claude_here"));
+        fs::create_dir_all(&paths.config_dir)?;
+        fs::write(paths.token_file(), "CLAUDE_CODE_OAUTH_TOKEN=x\n")?;
+        let c = cfg(ConfigFile {
+            net_capture: Some(true),
+            ..Default::default()
+        });
+        let mut f = HostFacts::gather(&paths, &c)?;
+        assert_eq!(f.token_file.as_deref(), Some(paths.token_file().as_path()));
+        assert!(!f.has_conversation);
+        let project = home.join("proj");
+        f.cwd = project.clone();
+
+        // An earlier session of this project and one of another project.
+        let log = paths.net_log_dir();
+        fs::create_dir_all(&log)?;
+        for (id, cwd) in [
+            ("20261101-000000-aaaa", &project),
+            ("20261101-000000-bbbb", &home),
+        ] {
+            let mut info = session_info(&c, &f, &req(), cwd, &[], true, false, false);
+            info.session_id = id.into();
+            info.cwd_host = cwd.clone();
+            let files = crate::net::SessionFiles::new(&log, id);
+            fs::write(&files.info, serde_json::to_string(&info)?)?;
+            fs::write(&files.summary, "{}")?;
+        }
+
+        let r = req();
+        let a = assemble(&c, &paths, &f, &git(), &r)?;
+        prepare_host_dirs(&paths, &c, &a.spec, &[], &r.session_id, &project)?;
+        let claude_json = fs::read_to_string(paths.container_home().join(".claude.json"))?;
+        assert!(
+            claude_json.contains("\"hasCompletedOnboarding\": true"),
+            "{claude_json}"
+        );
+        assert!(paths.config_dir.join("empty").exists());
+        assert!(project.exists(), "rw mount source created");
+        let staged: Vec<_> = fs::read_dir(paths.net_view_dir(&r.session_id))?
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            staged,
+            ["20261101-000000-aaaa.summary.json"],
+            "only this project"
+        );
+
+        // Onboarding is not written twice; staging again starts from scratch.
+        prepare_host_dirs(&paths, &c, &a.spec, &[], &r.session_id, &project)?;
+        Ok(())
+    }
 }

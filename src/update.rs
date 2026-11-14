@@ -100,7 +100,12 @@ pub fn refresh(paths: &HostPaths) -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    let body: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    record_latest(paths, &out.stdout)
+}
+
+/// Store the version GitHub's latest-release answer `body` names.
+fn record_latest(paths: &HostPaths, body: &[u8]) -> Option<String> {
+    let body: serde_json::Value = serde_json::from_slice(body).ok()?;
     let tag = body.get("tag_name")?.as_str()?;
     let latest = tag.trim_start_matches('v').to_string();
     write_cache(
@@ -360,6 +365,40 @@ mod tests {
         write_cache(&paths, &c)?;
         assert_eq!(read_cache(&paths), Some(c));
         assert_eq!(pending(&paths).as_deref(), Some("9.9.9"));
+        Ok(())
+    }
+
+    #[test]
+    fn the_latest_release_is_recorded_from_githubs_answer() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let paths = HostPaths::new(tmp.path().join("h"), tmp.path().join("cfg"));
+        std::fs::create_dir_all(&paths.config_dir)?;
+        assert_eq!(record_latest(&paths, b"not json"), None);
+        assert_eq!(record_latest(&paths, b"{\"name\":\"x\"}"), None);
+        assert_eq!(
+            record_latest(&paths, b"{\"tag_name\":\"v99.0.0\"}").as_deref(),
+            Some("99.0.0")
+        );
+        assert_eq!(
+            read_cache(&paths).map(|c| c.latest).as_deref(),
+            Some("99.0.0")
+        );
+        assert_eq!(pending(&paths).as_deref(), Some("99.0.0"));
+        Ok(())
+    }
+
+    #[test]
+    fn without_a_terminal_an_update_is_only_mentioned() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let paths = HostPaths::new(tmp.path().join("h"), tmp.path().join("cfg"));
+        std::fs::create_dir_all(&paths.config_dir)?;
+        assert!(!prompt_and_update(&paths, false, true), "nothing pending");
+        record_latest(&paths, b"{\"tag_name\":\"v99.0.0\"}");
+        assert!(
+            !prompt_and_update(&paths, false, true),
+            "no terminal, no update"
+        );
+        assert!(!prompt_and_update(&paths, true, false), "checks off");
         Ok(())
     }
 }

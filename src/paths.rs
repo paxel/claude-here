@@ -210,4 +210,25 @@ mod tests {
         assert_eq!(hp.expand_tilde("/abs"), PathBuf::from("/abs"));
         assert_eq!(hp.expand_tilde("~x"), PathBuf::from("~x"));
     }
+
+    #[test]
+    fn every_file_lives_in_the_config_dir() {
+        let p = HostPaths::new("/h".into(), "/h/.config/claude_here".into());
+        assert_eq!(
+            p.global_config(),
+            PathBuf::from("/h/.config/claude_here/config.toml")
+        );
+        assert_eq!(
+            p.token_file(),
+            PathBuf::from("/h/.config/claude_here/token")
+        );
+        assert_eq!(
+            p.user_dockerfile(),
+            PathBuf::from("/h/.config/claude_here/Dockerfile")
+        );
+        assert_eq!(
+            project_dir(Path::new("/w")),
+            PathBuf::from("/w/.claude_here")
+        );
+    }
 }

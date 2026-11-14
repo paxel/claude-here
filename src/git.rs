@@ -191,4 +191,60 @@ mod tests {
         assert!(layout.protected_dirs.is_empty());
         Ok(())
     }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let ok = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok, "git {args:?}");
+    }
+
+    #[test]
+    fn scan_protects_repos_and_worktree_pointers() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = fs::canonicalize(tmp.path())?;
+        let repo = root.join("repo");
+        fs::create_dir_all(repo.join("sub"))?;
+        git(&repo, &["init", "-q"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "x"]);
+
+        let inside = scan(&repo.join("sub"))?;
+        assert!(
+            inside
+                .notes
+                .iter()
+                .any(|n| n.contains("only cwd is mounted"))
+        );
+
+        let top = scan(&repo)?;
+        assert!(top.protected_dirs.contains(&repo.join(".git")));
+
+        let wt = root.join("wt");
+        git(
+            &repo,
+            &["worktree", "add", "-q", wt.to_str().unwrap_or_default()],
+        );
+        let layout = scan(&wt)?;
+        assert!(
+            layout.protected_dirs.contains(&repo.join(".git")),
+            "{layout:?}"
+        );
+        assert!(
+            layout
+                .protected_dirs
+                .iter()
+                .any(|d| d.starts_with(repo.join(".git").join("worktrees")))
+        );
+        assert!(
+            layout
+                .notes
+                .iter()
+                .any(|n| n.contains("worktree/submodule pointer"))
+        );
+        Ok(())
+    }
 }

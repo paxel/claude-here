@@ -551,4 +551,119 @@ mod tests {
         );
         Ok(())
     }
+
+    fn temp_paths() -> Result<(tempfile::TempDir, HostPaths)> {
+        let dir = tempfile::tempdir()?;
+        let paths = HostPaths::new(dir.path().join("home"), dir.path().join("cfg"));
+        std::fs::create_dir_all(&paths.config_dir)?;
+        Ok((dir, paths))
+    }
+
+    #[test]
+    fn config_commands_show_set_and_locate_the_global_config() -> Result<()> {
+        let (_dir, paths) = temp_paths()?;
+        let config = |action| run_subcommand(&paths, Command::Config(cli::ConfigArgs { action }));
+        config(ConfigAction::Path)?;
+        config(ConfigAction::Set {
+            key: "net_capture".into(),
+            value: "true".into(),
+            global: true,
+        })?;
+        let text = std::fs::read_to_string(paths.global_config())?;
+        assert!(text.contains("net_capture = true"), "{text}");
+        config(ConfigAction::Show)?;
+        let bad = config(ConfigAction::Set {
+            key: "no_such_key".into(),
+            value: "1".into(),
+            global: true,
+        });
+        assert!(bad.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn listing_commands_print_without_docker() -> Result<()> {
+        let (_dir, paths) = temp_paths()?;
+        run_subcommand(&paths, Command::Toolchains)?;
+        run_subcommand(
+            &paths,
+            Command::Completions {
+                shell: clap_complete::Shell::Fish,
+                bin: "claude_here".into(),
+            },
+        )?;
+        assert!(
+            completions_text(clap_complete::Shell::Bash, "claude_yolo").contains("claude_yolo")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn net_commands_read_the_session_log() -> Result<()> {
+        let (_dir, paths) = temp_paths()?;
+        let net = |action| run_subcommand(&paths, Command::Net(cli::NetArgs { action }));
+        let none = net(NetAction::Last { all: false })
+            .err()
+            .map_or_default(|e| e.to_string());
+        assert_eq!(none, "no recorded sessions");
+
+        let id = session::new_session_id();
+        let log = paths.net_log_dir();
+        std::fs::create_dir_all(&log)?;
+        let files = net::SessionFiles::new(&log, &id);
+        std::fs::write(&files.pcap, "")?;
+        let summary = net::Summary {
+            session_id: id.clone(),
+            hosts: vec![net::HostEntry {
+                host: "api.example".into(),
+                ip: "10.0.0.1".into(),
+                port: 443,
+                connections: 1,
+                bytes_out: 1,
+                bytes_in: 1,
+            }],
+            ..Default::default()
+        };
+        std::fs::write(&files.summary, serde_json::to_string(&summary)?)?;
+
+        net(NetAction::Last { all: true })?;
+        net(NetAction::Show {
+            session_id: id.clone(),
+            all: false,
+        })?;
+        net(NetAction::Top {
+            days: 7,
+            project: false,
+            limit: 5,
+        })?;
+        net(NetAction::Grep { host: "api".into() })?;
+        net(NetAction::List { limit: 5 })?;
+        net(NetAction::Prune { days: Some(30) })?;
+        assert!(files.pcap.exists(), "a fresh session survives pruning");
+        Ok(())
+    }
+
+    #[test]
+    fn dry_run_prints_the_docker_command_without_running_it() -> Result<()> {
+        let (_dir, paths) = temp_paths()?;
+        std::fs::write(paths.token_file(), "CLAUDE_CODE_OAUTH_TOKEN=x\n")?;
+        let cfg = load_config(&paths, ConfigFile::default())?;
+        assert_eq!(
+            dry_run(
+                &cfg,
+                &paths,
+                false,
+                false,
+                vec!["-p".into(), "hi there".into()]
+            )?,
+            0
+        );
+        let mut yolo = cfg.clone();
+        yolo.git_mode = config::GitMode::Full;
+        assert!(
+            dry_run(&yolo, &paths, true, false, vec![]).is_err(),
+            "yolo + full needs --i-know"
+        );
+        Ok(())
+    }
 }
