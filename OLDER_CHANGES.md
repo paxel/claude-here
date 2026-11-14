@@ -1,5 +1,11 @@
 # Older changes
 
+## 0.4.2 (2026-11-14)
+
+* `--python` builds again; the layer's check for the pyright language server failed with current pyright releases. `images/` changed, so the python layer is rebuilt once on first start.
+* With `--cloud ro`, read-only calls are no longer denied because of a flag value: `kubectl --context ctx -n ns get ns`, `kubectl config view -o yaml`, `helm -n ns list` and `aws ec2 describe-instances --output json` now go through. `images/` changed, so every image is rebuilt once on first start.
+* With `--docker`, testcontainers reaches the containers it starts without any configuration: `TESTCONTAINERS_HOST_OVERRIDE=localhost` is exported next to `TESTCONTAINERS_RYUK_DISABLED=true`.
+
 ## 0.4.1 (2026-10-28)
 
 * Image builds trust the company CA from `[tls] ca`: the first build, `--rebuild` and `update` now work behind a TLS-intercepting proxy. The CA is part of the base image, so changing it rebuilds the chain. `images/` changed, so every image is rebuilt once on first start.
