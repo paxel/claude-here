@@ -53,8 +53,12 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    # contents: the release itself. id-token and attestations: the signed
+    # build provenance (Sigstore certificate from the workflow's OIDC token).
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -62,6 +66,21 @@ jobs:
           path: dist
           merge-multiple: true
       - run: cp install.sh dist/
+      # SLSA build provenance for every archive and the installer, signed with
+      # Sigstore and stored with GitHub's attestations
+      # (`gh attestation verify <file> --repo paxel/claude-here`). The bundle is
+      # also a release asset, for verification without GitHub's API.
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/claude_here-*.tar.gz
+            dist/install.sh
+      - name: Add the provenance bundle to the release assets
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE" "dist/claude_here-${GITHUB_REF_NAME}.intoto.jsonl"
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: dist/*

@@ -90,6 +90,10 @@ home), runs `claude setup-token`, seeds the container home from your host
 installs fish completions and offers to add `.claude_here/` to your global git
 ignore. The first `claude_here` builds the `base` image locally (a few minutes).
 
+Every release archive and `install.sh` carry signed build provenance. Check a
+download with `gh attestation verify <file> --repo paxel/claude-here`; the
+bundle is also attached to the release as `claude_here-<version>.intoto.jsonl`.
+
 ### WSL
 
 WSL2 only — WSL1 has no namespaces or cgroups and cannot run containers.
