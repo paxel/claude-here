@@ -5,7 +5,7 @@
 [![Security](https://github.com/paxel/claude-here/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/paxel/claude-here/actions/workflows/security.yml)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=paxel_claude-here&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=paxel_claude-here)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/paxel/claude-here/badge)](https://scorecard.dev/viewer/?uri=github.com/paxel/claude-here)
-[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A552.97%25-yellow)](https://github.com/paxel/claude-here/blob/main/.github/workflows/quality.yml)
+[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A559.07%25-yellow)](https://github.com/paxel/claude-here/blob/main/.github/workflows/quality.yml)
 [![Release](https://img.shields.io/github/v/release/paxel/claude-here)](https://github.com/paxel/claude-here/releases/latest)
 [![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-success)](https://github.com/paxel/claude-here/blob/main/src/lib.rs)
 [![panic-free](https://img.shields.io/badge/panic--free-linted-success)](https://github.com/paxel/claude-here/blob/main/src/lib.rs)
@@ -89,6 +89,10 @@ home), runs `claude setup-token`, seeds the container home from your host
 `~/.claude` (`settings.json`, `CLAUDE.md`, `skills/`, `commands/`, `plugins/`),
 installs fish completions and offers to add `.claude_here/` to your global git
 ignore. The first `claude_here` builds the `base` image locally (a few minutes).
+
+Every release archive and `install.sh` carry signed build provenance. Check a
+download with `gh attestation verify <file> --repo paxel/claude-here`; the
+bundle is also attached to the release as `claude_here-<version>.intoto.jsonl`.
 
 ### WSL
 

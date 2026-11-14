@@ -11,7 +11,7 @@ use crate::docker::{Docker, Mount, RunSpec, uses_host_network};
 use crate::git::GitLayout;
 use crate::image::{self, BuildPolicy, Builder, Identity, short_hash};
 use crate::paths::{HostPaths, PathRewriter, project_dir};
-use crate::session::{MountInfo, SessionInfo, new_session_id, sanitize_name};
+use crate::session::{MountInfo, SessionInfo, new_session_id, printable_session_id, sanitize_name};
 use crate::toolchain::{self, Toolchain};
 
 /// Container-side path of the host net log directory.
@@ -857,7 +857,7 @@ pub fn execute(
     };
     eprintln!(
         "claude_here: session {} | image {} | git {}{} | cloud {}{mcp} | net {}{}",
-        req.session_id,
+        printable_session_id(&req.session_id),
         assembled.info.image,
         cfg.git_mode,
         protected,
