@@ -5,7 +5,12 @@
 # The apt lists and archives live in BuildKit cache mounts, so a rebuild of this
 # layer re-downloads nothing. That needs BuildKit, which the tool forces with
 # DOCKER_BUILDKIT=1.
-FROM debian:trixie-slim
+#
+# The base is pinned to the digest of its multi-arch index, so every build
+# starts from the same image; Dependabot proposes the next digest. The
+# `apt-get upgrade` below brings that image's packages up to date, so a
+# rebuild (`update --base`) still picks up Debian's security fixes.
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 ARG CH_USER=ni
 ARG CH_UID=1000
@@ -30,6 +35,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     echo 'wireshark-common wireshark-common/install-setuid boolean false' | debconf-set-selections \
  && apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends \
       bash ca-certificates curl git gh gnupg less locales nano procps \
       ripgrep fd-find jq unzip zip graphviz \

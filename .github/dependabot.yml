@@ -25,3 +25,11 @@ updates:
     # rust-toolchain.toml, never by a weekly update.
     ignore:
       - dependency-name: "dtolnay/rust-toolchain"
+  # The Debian digest in images/Dockerfile.base. The toolchain images start
+  # from the local base image and carry no digest.
+  - package-ecosystem: "docker"
+    directory: "/images"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 14
