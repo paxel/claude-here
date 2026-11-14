@@ -313,6 +313,10 @@ fn docker_toolchain_dry_run_relaxes_the_run_shape() {
         out.contains("-e TESTCONTAINERS_RYUK_DISABLED=true"),
         "{out}"
     );
+    assert!(
+        out.contains("-e TESTCONTAINERS_HOST_OVERRIDE=localhost"),
+        "{out}"
+    );
     assert!(out.contains("-docker-claude "), "{out}");
 }
 

@@ -13,10 +13,13 @@ cd ~/src/orders-service
 claude_here --jvm --docker
 ```
 
-Inside the session `DOCKER_HOST` points at the socket and
+Inside the session `DOCKER_HOST` points at the socket,
 `TESTCONTAINERS_RYUK_DISABLED=true` is exported, as the testcontainers
-documentation asks for rootless podman. Nothing else is configured; `mvn
-verify` or `gradle test` finds the API the way it does on the host.
+documentation asks for rootless podman, and `TESTCONTAINERS_HOST_OVERRIDE=localhost`
+is exported: the sandbox has `/.dockerenv`, so testcontainers would otherwise
+take the default gateway as the host of its containers, while their ports are
+published inside the sandbox. Nothing else is configured; `mvn verify` or
+`gradle test` finds the API the way it does on the host.
 
 To make it the project's default:
 

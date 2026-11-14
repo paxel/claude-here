@@ -649,8 +649,7 @@ mod tests {
         let jvm = crate::toolchain::TOOLCHAINS
             .iter()
             .find(|t| t.name == "jvm")
-            .map(|t| t.dockerfile)
-            .unwrap_or_default();
+            .map_or_default(|t| t.dockerfile);
         assert!(jvm.contains(&format!("/usr/local/lib/claude_here/ca-jvm.sh {crt}")));
         let import = jvm.find("ca-jvm.sh").unwrap_or(0);
         let graalvm = jvm.find("JAVA_HOME=/opt/graalvm").unwrap_or(usize::MAX);
@@ -760,6 +759,88 @@ mod tests {
             .output()?;
         assert!(!out.status.success());
         assert!(String::from_utf8_lossy(&out.stderr).contains("no certificate"));
+        Ok(())
+    }
+
+    /// Runs the cloud shim in `ro` mode as `tool`, in front of a fake binary
+    /// that prints `ran`; true when the call got through to it.
+    fn cloud_shim_ro(dir: &Path, tool: &str, args: &[&str]) -> Result<bool> {
+        let shims = dir.join("shims");
+        let bin = dir.join("bin");
+        fs::create_dir_all(&shims)?;
+        fs::create_dir_all(&bin)?;
+        let mode = dir.join("cloud_mode");
+        fs::write(&mode, "ro\n")?;
+        let shim = CLOUD_SHIM
+            .replace("/usr/local/lib/claude_here/shims", &shims.to_string_lossy())
+            .replace("/etc/claude_here/cloud_mode", &mode.to_string_lossy());
+        fs::write(shims.join(tool), shim)?;
+        let real = bin.join(tool);
+        fs::write(&real, "#!/bin/sh\necho ran\n")?;
+        fs::set_permissions(&real, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+        let path = format!("{}:{}:/usr/bin:/bin", shims.display(), bin.display());
+        let out = std::process::Command::new("bash")
+            .arg(shims.join(tool))
+            .args(args)
+            .env("PATH", path)
+            .output()?;
+        let ran = String::from_utf8_lossy(&out.stdout).contains("ran");
+        assert_eq!(
+            out.status.success(),
+            ran,
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Ok(ran)
+    }
+
+    /// The value of a global flag before the verb is not the verb, and a
+    /// trailing flag value is not the last word of a vendor CLI.
+    #[test]
+    fn cloud_shim_ro_skips_flag_values() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let d = dir.path();
+        let kubectl = |args: &[&str]| cloud_shim_ro(d, "kubectl", args);
+        assert!(kubectl(&["--context", "ctx", "-n", "ns", "get", "ns"])?);
+        assert!(kubectl(&["--context=ctx", "get", "pods"])?);
+        assert!(kubectl(&[
+            "--context",
+            "ctx",
+            "config",
+            "view",
+            "-o",
+            "yaml"
+        ])?);
+        assert!(kubectl(&["config", "get-contexts"])?);
+        assert!(!kubectl(&["--context", "get", "delete", "pod", "x"])?);
+        assert!(!kubectl(&["-n", "ns", "exec", "pod", "--", "sh"])?);
+        assert!(!kubectl(&[
+            "--context",
+            "ctx",
+            "config",
+            "use-context",
+            "view"
+        ])?);
+        assert!(cloud_shim_ro(d, "helm", &["-n", "ns", "list"])?);
+        assert!(cloud_shim_ro(
+            d,
+            "helm",
+            &["--kube-context", "x", "status", "rel"]
+        )?);
+        assert!(!cloud_shim_ro(
+            d,
+            "helm",
+            &["-n", "ns", "uninstall", "rel"]
+        )?);
+        let aws = |args: &[&str]| cloud_shim_ro(d, "aws", args);
+        assert!(aws(&["ec2", "describe-instances", "--output", "json"])?);
+        assert!(aws(&["--region", "eu-west-1", "s3", "ls"])?);
+        assert!(!aws(&[
+            "ec2",
+            "terminate-instances",
+            "--instance-ids",
+            "list"
+        ])?);
         Ok(())
     }
 

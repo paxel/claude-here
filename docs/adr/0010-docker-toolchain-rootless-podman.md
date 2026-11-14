@@ -130,6 +130,11 @@ documentation for rootless podman says to disable the reaper (Ryuk; the
 `TESTCONTAINERS_RYUK_PRIVILEGED` switch only ever applied to rootful podman
 before 1.19). Testcontainers still removes its containers when the test JVM
 exits; only a `kill -9` leaks them, and the whole set dies with the session.
+`TESTCONTAINERS_HOST_OVERRIDE=localhost` is exported as well: the sandbox has
+`/.dockerenv`, and testcontainers inside a container takes the default gateway
+as the host of the containers it starts, but the nested containers publish
+their ports in the sandbox's own network namespace, so only `localhost`
+reaches them.
 
 Under `net_mode = allowlist` the toolchain allows Docker Hub, `ghcr.io` and
 `quay.io`; company registries go into `net_allow` like any other host. The

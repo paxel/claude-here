@@ -12,4 +12,4 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
  && for b in poetry ruff mypy; do ln -s "/opt/pytools/bin/$b" "/usr/local/bin/$b"; done \
  && poetry --version && ruff --version && mypy --version
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-    npm install -g pyright && pyright-langserver --version
+    npm install -g pyright && pyright --version && command -v pyright-langserver

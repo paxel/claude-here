@@ -713,6 +713,15 @@ mod tests {
         }
     }
 
+    /// `pyright-langserver` only speaks LSP and exits 1 on `--version`, which
+    /// failed the python layer's build; the smoke check asks `pyright` instead.
+    #[test]
+    fn python_layer_smoke_checks_pyright_without_starting_the_server() {
+        assert!(!PYTHON.contains("pyright-langserver --version"));
+        assert!(PYTHON.contains("pyright --version"));
+        assert!(PYTHON.contains("command -v pyright-langserver"));
+    }
+
     #[test]
     fn only_cloud_toolchains_carry_credentials() {
         for t in TOOLCHAINS {

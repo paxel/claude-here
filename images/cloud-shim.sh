@@ -29,14 +29,51 @@ if [ "${mode}" != "ro" ]; then
   exec "${REAL}" "$@"
 fi
 
-# First non-flag argument is the verb.
-verb=""
-for a in "$@"; do
-  case "${a}" in
-    -*) ;;
-    *) verb="${a}"; break ;;
-  esac
-done
+in_list() {
+  needle="$1"
+  shift
+  for w in $1; do
+    [ "${needle}" = "${w}" ] && return 0
+  done
+  return 1
+}
+
+# Global flags of kubectl and helm that take their value as the next word, so
+# that value is not mistaken for the verb (`kubectl --context prod -n app get`).
+kubectl_value_flags="-n --namespace --context --cluster --user --kubeconfig -s --server --token --as --as-group --as-uid --certificate-authority --client-certificate --client-key --tls-server-name --request-timeout --cache-dir --username --password --profile --profile-output -v --v --vmodule --log-flush-frequency"
+helm_value_flags="-n --namespace --kube-context --kubeconfig --kube-apiserver --kube-as-user --kube-as-group --kube-ca-file --kube-tls-server-name --kube-token --burst-limit --qps --registry-config --repository-cache --repository-config"
+
+# Prints the n-th argument that is neither a flag nor the value of one of the
+# flags listed in the second argument.
+nth_word() {
+  n="$1"
+  value_flags="$2"
+  shift 2
+  skip=0
+  for a in "$@"; do
+    if [ "${skip}" = 1 ]; then
+      skip=0
+      continue
+    fi
+    case "${a}" in
+      -*=*) ;;
+      -*) if in_list "${a}" "${value_flags}"; then skip=1; fi ;;
+      *)
+        n=$((n - 1))
+        if [ "${n}" = 0 ]; then
+          printf '%s' "${a}"
+          return
+        fi ;;
+    esac
+  done
+}
+
+case "${name}" in
+  kubectl) value_flags="${kubectl_value_flags}" ;;
+  helm) value_flags="${helm_value_flags}" ;;
+  *) value_flags="" ;;
+esac
+verb="$(nth_word 1 "${value_flags}" "$@")"
 
 deny() {
   echo "${name} ${verb}: denied by claude_here (cloud mode: ro). ${1}" \
@@ -49,15 +86,6 @@ allowed_helm="list get status template show history version env repo search depe
 allowed_terraform="init validate fmt plan show output providers version graph state"
 allowed_vendor_prefix="describe list get help version"
 
-in_list() {
-  needle="$1"
-  shift
-  for w in $1; do
-    [ "${needle}" = "${w}" ] && return 0
-  done
-  return 1
-}
-
 case "${name}" in
   kubectl)
     case "${verb}" in
@@ -67,12 +95,10 @@ case "${name}" in
     if [ -z "${verb}" ] || in_list "${verb}" "${allowed_kubectl}"; then
       # `kubectl config` may only read.
       if [ "${verb}" = "config" ]; then
-        for a in "$@"; do
-          case "${a}" in
-            view|get-contexts|current-context|get-clusters|get-users|--*|kubectl|config) ;;
-            *) deny "Only read subcommands of kubectl config are allowed." ;;
-          esac
-        done
+        case "$(nth_word 2 "${kubectl_value_flags}" "$@")" in
+          view|get-contexts|current-context|get-clusters|get-users|"") ;;
+          *) deny "Only read subcommands of kubectl config are allowed." ;;
+        esac
       fi
       exec "${REAL}" "$@"
     fi
@@ -97,10 +123,22 @@ case "${name}" in
     deny "Allowed: ${allowed_terraform}." ;;
   aws|gcloud|az)
     # Vendor CLIs are verb-last (`aws s3 ls`, `gcloud compute instances list`):
-    # take the final non-flag word and accept read verbs and read prefixes.
+    # take the final word that is neither a flag nor a flag's value and accept
+    # read verbs and read prefixes. A flag without `=` is taken to own the next
+    # word (`--output json`); for a switch that only moves the check to an
+    # earlier word.
     last=""
+    skip=0
     for a in "$@"; do
-      case "${a}" in -*) ;; *) last="${a}" ;; esac
+      if [ "${skip}" = 1 ]; then
+        skip=0
+        continue
+      fi
+      case "${a}" in
+        -*=*) ;;
+        -*) skip=1 ;;
+        *) last="${a}" ;;
+      esac
     done
     case "${last}" in
       ls|list|describe|get|show|version|help|status|history) exec "${REAL}" "$@" ;;
