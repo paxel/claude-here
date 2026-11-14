@@ -19,3 +19,9 @@ Every pull request and every change to the main branch runs CodeQL and a depende
 and SonarQube Cloud and OpenSSF Scorecard analyse the main branch. The CodeQL and Scorecard
 findings are the repository's code scanning alerts, SonarQube Cloud's are on its project page;
 a report does not need to repeat them.
+
+## Verifying a release
+
+Every release archive and the install script carry SLSA build provenance, signed with
+Sigstore by the release workflow. `gh attestation verify <file> --repo paxel/claude-here`
+checks that a file was built by this repository's workflow from the tagged commit.

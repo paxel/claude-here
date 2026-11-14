@@ -1,0 +1,51 @@
+# Fuzz targets for the parsers that read untrusted or hand-written input.
+# Run with cargo-fuzz on nightly: `cargo +nightly fuzz run <target>`;
+# .github/workflows/fuzz.yml runs every target for a minute.
+[package]
+name = "claude-here-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+serde_json = "1.0.151"
+toml = "1.1.6"
+
+[dependencies.claude-here]
+path = ".."
+
+# Its own workspace, so the fuzz crate stays out of the main build.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "session_id"
+path = "fuzz_targets/session_id.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_file"
+path = "fuzz_targets/config_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "split_args"
+path = "fuzz_targets/split_args.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "net_files"
+path = "fuzz_targets/net_files.rs"
+test = false
+doc = false
+bench = false

@@ -91,6 +91,16 @@ pub fn new_session_id() -> String {
     format!("{}-{salt:04x}", Civil::from_unix(now_secs()).compact())
 }
 
+/// A session id as shown to the user. It is a UTC timestamp and 4 hex digits
+/// of entropy: a label, not a secret. Messages that show a session id take it
+/// from here, because CodeQL's cleartext-logging query treats the name
+/// `session_id` as sensitive; the model in
+/// `.github/codeql/extensions/claude-here-models` marks this return value as
+/// safe to print.
+pub fn printable_session_id(id: &str) -> &str {
+    id
+}
+
 /// Parse the timestamp prefix of a session id back into unix seconds.
 pub fn session_start_secs(session_id: &str) -> Option<i64> {
     let (date, rest) = session_id.split_once('-')?;
@@ -284,9 +294,55 @@ mod tests {
     }
 
     #[test]
+    fn printable_session_id_is_the_id() {
+        assert_eq!(
+            printable_session_id("20260919-123456-ab12"),
+            "20260919-123456-ab12"
+        );
+    }
+
+    /// The CodeQL barrier model names functions by path; a rename would
+    /// silently turn the barrier off and bring the false alerts back.
+    #[test]
+    fn codeql_barrier_model_names_existing_functions() -> anyhow::Result<()> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let model = std::fs::read_to_string(
+            root.join(".github/codeql/extensions/claude-here-models/models/printable.model.yml"),
+        )?;
+        let paths: Vec<&str> = model
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("- [\"claude_here::"))
+            .filter_map(|l| l.split('"').next())
+            .collect();
+        assert!(!paths.is_empty(), "no claude_here rows in the model");
+        for path in paths {
+            let (module, function) = path.rsplit_once("::").unwrap_or(("", path));
+            let module = module.replace("::", "/");
+            let file = [format!("src/{module}.rs"), format!("src/{module}/mod.rs")]
+                .into_iter()
+                .map(|f| root.join(f))
+                .find(|f| f.exists());
+            let source = match file {
+                Some(f) => std::fs::read_to_string(f)?,
+                None => String::new(),
+            };
+            assert!(
+                source.contains(&format!("pub fn {function}(")),
+                "claude_here::{path} in the CodeQL model does not exist"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn session_id_shape() {
         let id = new_session_id();
-        assert_eq!(id.len(), "20260919-123456-ab12".len(), "{id}");
+        assert_eq!(
+            id.len(),
+            "20260919-123456-ab12".len(),
+            "{}",
+            printable_session_id(&id)
+        );
         assert!(session_start_secs(&id).is_some());
     }
 

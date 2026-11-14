@@ -12,6 +12,16 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
+  # The fuzz crate has its own lockfile.
+  - package-ecosystem: "cargo"
+    directory: "/fuzz"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 14
+    groups:
+      cargo-fuzz:
+        patterns: ["*"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -25,3 +35,11 @@ updates:
     # rust-toolchain.toml, never by a weekly update.
     ignore:
       - dependency-name: "dtolnay/rust-toolchain"
+  # The Debian digest in images/Dockerfile.base. The toolchain images start
+  # from the local base image and carry no digest.
+  - package-ecosystem: "docker"
+    directory: "/images"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 14

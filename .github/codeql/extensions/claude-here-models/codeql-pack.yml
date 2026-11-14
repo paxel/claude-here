@@ -1,0 +1,10 @@
+# CodeQL model pack for this repository, picked up by code scanning from
+# .github/codeql/extensions. It adds facts about claude_here's own functions
+# that the standard Rust models cannot know.
+name: paxel/claude-here-models
+version: 0.0.0
+library: true
+extensionTargets:
+  codeql/rust-all: "*"
+dataExtensions:
+  - models/**/*.yml
