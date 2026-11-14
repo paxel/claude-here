@@ -1,5 +1,6 @@
 //! Host-side handling of per-session network captures.
 
+pub mod build;
 pub mod report;
 
 use std::fs;
@@ -154,7 +155,7 @@ pub fn print_exit_summary(paths: &HostPaths, session_id: &str, info: &SessionInf
             human_bytes(s.bytes_in)
         ),
         None if files.pcap.exists() => eprintln!(
-            "claude_here: net: capture saved to {} (no summary)",
+            "claude_here: net: capture saved to {} — `claude_here net last` for the summary",
             files.pcap.display()
         ),
         None => eprintln!("claude_here: net: no capture produced"),

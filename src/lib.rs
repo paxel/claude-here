@@ -313,10 +313,13 @@ fn net_command(paths: &HostPaths, action: NetAction) -> Result<()> {
             let Some(files) = net::list_sessions(&dir).into_iter().next() else {
                 bail!("no recorded sessions");
             };
+            ensure_summaries([&files]);
             net::report::print_session(&files)
         }
         NetAction::Show { session_id } => {
-            net::report::print_session(&net::SessionFiles::new(&dir, &session_id))
+            let files = net::SessionFiles::new(&dir, &session_id);
+            ensure_summaries([&files]);
+            net::report::print_session(&files)
         }
         NetAction::Top {
             days,
@@ -324,9 +327,18 @@ fn net_command(paths: &HostPaths, action: NetAction) -> Result<()> {
             limit,
         } => {
             let cwd = std::env::current_dir()?;
+            let cutoff = session::now_secs().saturating_sub(i64::from(days).saturating_mul(86_400));
+            let recent: Vec<net::SessionFiles> = net::list_sessions(&dir)
+                .into_iter()
+                .filter(|f| session::session_start_secs(&f.session_id).is_some_and(|s| s >= cutoff))
+                .collect();
+            ensure_summaries(&recent);
             net::report::print_top(&dir, days, project.then_some(cwd.as_path()), limit)
         }
-        NetAction::Grep { host } => net::report::print_grep(&dir, &host),
+        NetAction::Grep { host } => {
+            ensure_summaries(&net::list_sessions(&dir));
+            net::report::print_grep(&dir, &host)
+        }
         NetAction::Shark { session_id } => {
             let id = match session_id {
                 Some(id) => id,
@@ -344,6 +356,25 @@ fn net_command(paths: &HostPaths, action: NetAction) -> Result<()> {
             Ok(())
         }
         NetAction::List { limit } => net::report::print_list(&dir, limit),
+    }
+}
+
+/// Build the missing summaries of `sessions` from their captures, in the base
+/// image. A failure is a warning: the views still show what they have.
+fn ensure_summaries<'a>(sessions: impl IntoIterator<Item = &'a net::SessionFiles>) {
+    let Ok((uid, gid)) = run::process_ids() else {
+        return;
+    };
+    let docker = docker::Docker::default();
+    let builder = net::build::Builder {
+        docker: &docker,
+        image: image::base_tag(&uid),
+        user: format!("{uid}:{gid}"),
+    };
+    for files in sessions {
+        if let Err(e) = builder.ensure_summary(files) {
+            eprintln!("claude_here: warning: {e:#}");
+        }
     }
 }
 

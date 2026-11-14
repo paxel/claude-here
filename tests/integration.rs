@@ -192,7 +192,7 @@ fn commit_mode_shim_allows_commit_and_denies_push_and_checkout() {
 
 #[test]
 #[ignore = "needs docker"]
-fn sandbox_user_cannot_stop_capture_and_summary_is_written() {
+fn sandbox_user_cannot_stop_capture_and_summary_is_built_on_demand() {
     let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
     let xdg = config_root(tmp.path());
     let project = tmp.path().join("proj");
@@ -231,10 +231,30 @@ fn sandbox_user_cannot_stop_capture_and_summary_is_written() {
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     assert!(text.contains("kill=1"), "{text}");
     assert!(text.contains("curl=0"), "{text}");
-    let summary = fs::read_to_string(out_dir.join("cap.summary.json")).unwrap_or_default();
+    let pcap = out_dir.join("cap.pcap");
+    assert!(pcap.exists());
+    assert!(
+        !out_dir.join("cap.summary.json").exists(),
+        "no summary at exit"
+    );
+    // What `claude_here net show` runs when the summary is first asked for.
+    let built = tmp.path().join("built");
+    fs::create_dir_all(&built).ok();
+    let args = claude_here::net::build::summary_args(
+        &claude_here::image::base_tag(&uid.0),
+        &format!("{}:{}", uid.0, uid.1),
+        &pcap,
+        &built,
+        "cap",
+    );
+    let status = Command::new("docker")
+        .args(&args)
+        .status()
+        .unwrap_or_else(|e| panic!("docker: {e}"));
+    assert!(status.success());
+    let summary = fs::read_to_string(built.join("cap.summary.json")).unwrap_or_default();
     assert!(summary.contains("\"example.com\""), "{summary}");
     assert!(summary.contains("GET http://example.com/"), "{summary}");
-    assert!(out_dir.join("cap.pcap").exists());
 }
 
 /// Run `script` through the entrypoint of `image` with the hardened base
