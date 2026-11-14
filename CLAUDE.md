@@ -29,4 +29,5 @@ locked design decisions before proposing structural changes.
 * `cargo test` reads `CLAUDE_CONFIG_DIR` in one init test; run it with that variable unset.
 * Image files use BuildKit cache mounts; a file with `RUN --mount` needs `# syntax=docker/dockerfile:1.7` on line 1, and `Docker::run_build` sets `DOCKER_BUILDKIT=1`.
 * Never `chown -R` a tree after filling it: own the directory first and write as the target user, otherwise the whole tree is copied into another layer. Tests enforce both rules.
+* Coverage ratchet: `quality.yml` fails under the coverage floor (`--fail-under`), which is the measured value minus 2. When coverage rises, raise the floor in the same PR; never lower it.
 * Commits: one-line summary, no trailers.

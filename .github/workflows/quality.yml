@@ -1,0 +1,52 @@
+name: Quality
+on:
+  # Pushes only to main, which takes nothing but PR merges. Every other branch
+  # is tested by its PR run, which tests the merge of the branch into its base:
+  # with up-to-date branches required, that is the tree the merge puts on main.
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["**"]
+# A newer push or PR update cancels the older run of the same branch. The
+# group names the bare branch: head_ref is bare on PR events, ref_name (not
+# ref, which is refs/heads/…) on pushes.
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+# The token only reads the code: no job writes to the repository.
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+jobs:
+  rust-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Keep in sync with rust-toolchain.toml; toolchain bumps are deliberate, separate PRs.
+      - uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0 branch
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Formatting
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        with:
+          tool: cargo-tarpaulin
+      # Ratchet rule (see CLAUDE.md): the floor is the measured coverage minus
+      # 2; when coverage rises, raise --fail-under in the same PR. Never lower it.
+      # No floor yet: it is set from the first value this job measures.
+      # The LCOV file is for the sonar job, which downloads it.
+      - name: Coverage
+        run: cargo tarpaulin --out Xml --out Lcov
+      - name: Upload the coverage for SonarQube Cloud
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-lcov
+          path: lcov.info
+          if-no-files-found: ignore
+          retention-days: 7
