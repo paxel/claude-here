@@ -20,5 +20,7 @@ jobs:
       - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: cargo-audit
+      # Warnings fail too: an unsound, unmaintained or yanked crate is a
+      # finding, not a footnote (RUSTSEC-2026-0486 passed as a warning).
       - name: cargo audit
-        run: cargo audit
+        run: cargo audit --deny warnings
