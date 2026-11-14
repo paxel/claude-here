@@ -3,14 +3,17 @@ on:
   push:
     branches: [main]
   pull_request:
+# The token only reads the code: no job writes to the repository.
+permissions:
+  contents: read
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Keep in sync with rust-toolchain.toml; toolchain bumps are deliberate, separate PRs.
       - uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0 branch
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo test
   # The same audit as the weekly security.yml, on every pull request and push
   # to main, so a vulnerable crate cannot come in unnoticed.
@@ -18,8 +21,8 @@ jobs:
     name: Vulnerable crates (cargo audit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: cargo-audit
       - name: cargo audit
@@ -31,10 +34,10 @@ jobs:
     needs: build-and-test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Keep in sync with rust-toolchain.toml; toolchain bumps are deliberate, separate PRs.
       - uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0 branch
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: docker version && uname -r
       - run: sysctl kernel.apparmor_restrict_unprivileged_userns || true
       - run: cargo test --test integration -- --ignored --test-threads=1 docker_toolchain ca_is
