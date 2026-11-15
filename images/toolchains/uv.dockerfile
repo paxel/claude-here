@@ -3,7 +3,6 @@
 ARG BASE=claude_here:base
 FROM ${BASE}
 # The release archive is checked against the sha256 published with it.
-# renovate: datasource=github-releases depName=astral-sh/uv
 ARG UV_VERSION=0.13.8
 RUN set -eu \
  && case "$(uname -m)" in \
