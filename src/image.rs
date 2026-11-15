@@ -286,7 +286,12 @@ impl Builder<'_> {
     }
 
     fn ensure_toolchain(&self, tag: &str, toolchain: &Toolchain, parent: &str) -> Result<String> {
-        let hash = hash_inputs(&[&self.parent_id(parent)?, toolchain.dockerfile]);
+        let parent_id = self.parent_id(parent)?;
+        let mut inputs: Vec<&str> = vec![&parent_id, toolchain.dockerfile];
+        for (name, content) in toolchain.files {
+            inputs.extend([*name, *content]);
+        }
+        let hash = hash_inputs(&inputs);
         if self.is_current(tag, &hash) {
             return Ok(tag.to_string());
         }
@@ -294,6 +299,9 @@ impl Builder<'_> {
         eprintln!("claude_here: building {tag}");
         let ctx = BuildContext::new(toolchain.name)?;
         ctx.write("Dockerfile", toolchain.dockerfile)?;
+        for (name, content) in toolchain.files {
+            ctx.write(name, content)?;
+        }
         self.docker.build(&Build {
             context: ctx.dir.clone(),
             tag: tag.to_string(),
@@ -570,14 +578,18 @@ mod tests {
     fn claude_is_installed_by_its_own_layer_only() {
         assert!(!DOCKERFILE_BASE.contains("install.sh"));
         assert!(!DOCKERFILE_BASE.contains("CLAUDE_VERSION"));
-        assert!(DOCKERFILE_CLAUDE.contains("claude.ai/install.sh"));
+        assert!(DOCKERFILE_CLAUDE.contains("downloads.claude.ai/claude-code-releases"));
         // ARGs before FROM are out of scope after it; these must follow it.
         let (_, after_from) = DOCKERFILE_CLAUDE
             .split_once("FROM ${BASE}")
             .unwrap_or_default();
         assert!(after_from.contains("ARG CLAUDE_VERSION"));
         assert!(after_from.contains("ARG CH_USER"));
-        assert!(after_from.contains("bash -s -- \"${CLAUDE_VERSION}\""));
+        assert!(after_from.contains("version=\"${CLAUDE_VERSION}\""));
+        assert!(
+            after_from.contains("sha256sum -c -"),
+            "binary checked before it runs"
+        );
         // Installed as the sandbox user; the image ends as root for the entrypoint.
         assert!(after_from.contains("USER ${CH_USER}"));
         assert_eq!(
@@ -893,5 +905,185 @@ mod tests {
             project_tag(&base_tag(&1001), false, Path::new("/x"))
                 .starts_with("claude_here:base-u1001-p-")
         );
+    }
+
+    mod builder {
+        use super::super::*;
+        use crate::docker::fake::FakeDocker;
+        use crate::paths::project_dir;
+
+        struct Env {
+            fake: FakeDocker,
+            paths: HostPaths,
+            project: tempfile::TempDir,
+            _home: tempfile::TempDir,
+        }
+
+        fn env() -> Result<Env> {
+            let home = tempfile::tempdir()?;
+            let paths = HostPaths::new(home.path().into(), home.path().join("cfg"));
+            fs::create_dir_all(&paths.config_dir)?;
+            Ok(Env {
+                fake: FakeDocker::new()?,
+                paths,
+                project: tempfile::tempdir()?,
+                _home: home,
+            })
+        }
+
+        fn builder<'a>(e: &'a Env, names: &[&str], policy: BuildPolicy) -> Result<Builder<'a>> {
+            let toolchains: Vec<String> = names.iter().map(ToString::to_string).collect();
+            Ok(Builder {
+                docker: &e.fake.docker,
+                paths: &e.paths,
+                identity: Identity {
+                    user: "ni".into(),
+                    uid: 1000,
+                    gid: 1000,
+                    claude_version: "2.1.311".into(),
+                },
+                toolchains: crate::toolchain::resolve(&toolchains)?,
+                policy,
+                ca: None,
+            })
+        }
+
+        #[test]
+        fn the_chain_is_built_once_and_then_reused() -> Result<()> {
+            let e = env()?;
+            let b = builder(&e, &["node"], BuildPolicy::default())?;
+            let tag = b.ensure(None, e.project.path())?;
+            assert_eq!(tag, b.final_tag(None, e.project.path())?);
+            assert_eq!(
+                e.fake.built(),
+                [
+                    "claude_here:base-u1000",
+                    "claude_here:base-u1000-node",
+                    &tag
+                ]
+            );
+            let (dockerfile, context) = e.fake.built_from("claude_here:base-u1000-node");
+            assert_eq!(dockerfile, b.toolchains[0].dockerfile);
+            assert!(context.contains("package-lock.json"), "{context}");
+            assert_eq!(e.fake.label(&tag, CLAUDE_LABEL).as_deref(), Some("2.1.311"));
+
+            // Everything current: nothing is built again.
+            b.ensure(None, e.project.path())?;
+            assert_eq!(e.fake.built().len(), 3);
+
+            // --rebuild builds every layer again.
+            let force = BuildPolicy {
+                force: true,
+                ..Default::default()
+            };
+            builder(&e, &["node"], force)?.ensure(None, e.project.path())?;
+            assert_eq!(e.fake.built().len(), 6);
+            Ok(())
+        }
+
+        #[test]
+        fn user_and_project_layers_sit_between_toolchains_and_claude() -> Result<()> {
+            let e = env()?;
+            fs::write(e.paths.user_dockerfile(), "RUN echo user\n")?;
+            let pdir = project_dir(e.project.path());
+            fs::create_dir_all(&pdir)?;
+            fs::write(pdir.join("Dockerfile"), "# only a comment\n")?;
+            let b = builder(&e, &[], BuildPolicy::default())?;
+            let tag = b.ensure(None, &pdir)?;
+            let built = e.fake.built();
+            assert_eq!(built.len(), 3, "{built:?}");
+            assert!(built[1].ends_with("-user"), "{built:?}");
+            let (dockerfile, _) = e.fake.built_from(&built[1]);
+            assert!(dockerfile.contains("RUN echo user"));
+            assert_eq!(built[2], tag);
+
+            // The project layer counts once it has an instruction.
+            fs::write(pdir.join("Dockerfile"), "RUN echo project\n")?;
+            let tag = b.ensure(None, &pdir)?;
+            assert_eq!(e.fake.built().len(), 5, "project layer and claude on top");
+            assert_eq!(tag, b.final_tag(None, &pdir)?);
+            Ok(())
+        }
+
+        #[test]
+        fn no_build_refuses_missing_images_but_keeps_an_older_claude() -> Result<()> {
+            let e = env()?;
+            let no_build = BuildPolicy {
+                no_build: true,
+                ..Default::default()
+            };
+            let err = builder(&e, &[], no_build)?
+                .ensure(None, e.project.path())
+                .err()
+                .map_or_default(|e| e.to_string());
+            assert!(err.contains("--no-build was given"), "{err}");
+
+            let b = builder(&e, &[], BuildPolicy::default())?;
+            let tag = b.ensure(None, e.project.path())?;
+            let mut newer = builder(&e, &[], no_build)?;
+            newer.identity.claude_version = "9.9.9".into();
+            assert_eq!(
+                newer.ensure(None, e.project.path())?,
+                tag,
+                "kept despite the version"
+            );
+            assert_eq!(e.fake.built().len(), 2, "nothing rebuilt");
+            Ok(())
+        }
+
+        #[test]
+        fn a_custom_image_is_only_checked_for_existence() -> Result<()> {
+            let e = env()?;
+            let b = builder(&e, &["node"], BuildPolicy::default())?;
+            let err = b
+                .ensure(Some("mine:1"), e.project.path())
+                .err()
+                .map_or_default(|e| e.to_string());
+            assert_eq!(err, "custom image 'mine:1' not found locally");
+            e.fake.add_image("mine:1", &[])?;
+            assert_eq!(b.ensure(Some("mine:1"), e.project.path())?, "mine:1");
+            assert_eq!(b.final_tag(Some("mine:1"), e.project.path())?, "mine:1");
+            assert_eq!(e.fake.built(), Vec::<String>::new());
+            Ok(())
+        }
+
+        #[test]
+        fn the_company_ca_is_baked_into_the_base_and_must_be_readable() -> Result<()> {
+            let e = env()?;
+            let mut b = builder(&e, &[], BuildPolicy::default())?;
+            b.ca = Some(e.paths.config_dir.join("missing.pem"));
+            let err = b
+                .ensure(None, e.project.path())
+                .err()
+                .map_or_default(|e| format!("{e:#}"));
+            assert!(err.contains("reading the company CA"), "{err}");
+
+            let pem = e.paths.config_dir.join("ca.pem");
+            fs::write(&pem, "-----BEGIN CERTIFICATE-----\n")?;
+            b.ca = Some(pem.clone());
+            b.ensure(None, e.project.path())?;
+            let base = e
+                .fake
+                .calls()
+                .into_iter()
+                .find(|c| c.starts_with("build -t claude_here:base-u1000 "));
+            assert!(base.is_some_and(|c| c.contains(&format!("src={}", pem.display()))));
+            Ok(())
+        }
+
+        #[test]
+        fn a_failed_build_stops_the_chain() -> Result<()> {
+            let e = env()?;
+            e.fake.set("fail-build", "")?;
+            let err = builder(&e, &[], BuildPolicy::default())?
+                .ensure(None, e.project.path())
+                .err()
+                .map_or_default(|e| e.to_string());
+            assert_eq!(
+                err,
+                "docker build of claude_here:base-u1000 failed (exit 1)"
+            );
+            Ok(())
+        }
     }
 }

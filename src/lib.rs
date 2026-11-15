@@ -309,14 +309,17 @@ fn net_command(paths: &HostPaths, action: NetAction) -> Result<()> {
     let cfg = load_config(paths, ConfigFile::default())?;
     let dir = paths.net_log_dir();
     match action {
-        NetAction::Last => {
+        NetAction::Last { all } => {
             let Some(files) = net::list_sessions(&dir).into_iter().next() else {
                 bail!("no recorded sessions");
             };
-            net::report::print_session(&files)
+            ensure_summaries([&files]);
+            net::report::print_session(&files, all)
         }
-        NetAction::Show { session_id } => {
-            net::report::print_session(&net::SessionFiles::new(&dir, &session_id))
+        NetAction::Show { session_id, all } => {
+            let files = net::SessionFiles::new(&dir, &session_id);
+            ensure_summaries([&files]);
+            net::report::print_session(&files, all)
         }
         NetAction::Top {
             days,
@@ -324,9 +327,18 @@ fn net_command(paths: &HostPaths, action: NetAction) -> Result<()> {
             limit,
         } => {
             let cwd = std::env::current_dir()?;
+            let cutoff = session::now_secs().saturating_sub(i64::from(days).saturating_mul(86_400));
+            let recent: Vec<net::SessionFiles> = net::list_sessions(&dir)
+                .into_iter()
+                .filter(|f| session::session_start_secs(&f.session_id).is_some_and(|s| s >= cutoff))
+                .collect();
+            ensure_summaries(&recent);
             net::report::print_top(&dir, days, project.then_some(cwd.as_path()), limit)
         }
-        NetAction::Grep { host } => net::report::print_grep(&dir, &host),
+        NetAction::Grep { host } => {
+            ensure_summaries(&net::list_sessions(&dir));
+            net::report::print_grep(&dir, &host)
+        }
         NetAction::Shark { session_id } => {
             let id = match session_id {
                 Some(id) => id,
@@ -344,6 +356,25 @@ fn net_command(paths: &HostPaths, action: NetAction) -> Result<()> {
             Ok(())
         }
         NetAction::List { limit } => net::report::print_list(&dir, limit),
+    }
+}
+
+/// Build the missing summaries of `sessions` from their captures, in the base
+/// image. A failure is a warning: the views still show what they have.
+fn ensure_summaries<'a>(sessions: impl IntoIterator<Item = &'a net::SessionFiles>) {
+    let Ok((uid, gid)) = run::process_ids() else {
+        return;
+    };
+    let docker = docker::Docker::default();
+    let builder = net::build::Builder {
+        docker: &docker,
+        image: image::base_tag(&uid),
+        user: format!("{uid}:{gid}"),
+    };
+    for files in sessions {
+        if let Err(e) = builder.ensure_summary(files) {
+            eprintln!("claude_here: warning: {e:#}");
+        }
     }
 }
 
@@ -517,6 +548,121 @@ mod tests {
         assert_eq!(
             ConfigFile::load(&project)?.toolchains,
             vec!["dart".to_string(), "rust".into(), "node".into()]
+        );
+        Ok(())
+    }
+
+    fn temp_paths() -> Result<(tempfile::TempDir, HostPaths)> {
+        let dir = tempfile::tempdir()?;
+        let paths = HostPaths::new(dir.path().join("home"), dir.path().join("cfg"));
+        std::fs::create_dir_all(&paths.config_dir)?;
+        Ok((dir, paths))
+    }
+
+    #[test]
+    fn config_commands_show_set_and_locate_the_global_config() -> Result<()> {
+        let (_dir, paths) = temp_paths()?;
+        let config = |action| run_subcommand(&paths, Command::Config(cli::ConfigArgs { action }));
+        config(ConfigAction::Path)?;
+        config(ConfigAction::Set {
+            key: "net_capture".into(),
+            value: "true".into(),
+            global: true,
+        })?;
+        let text = std::fs::read_to_string(paths.global_config())?;
+        assert!(text.contains("net_capture = true"), "{text}");
+        config(ConfigAction::Show)?;
+        let bad = config(ConfigAction::Set {
+            key: "no_such_key".into(),
+            value: "1".into(),
+            global: true,
+        });
+        assert!(bad.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn listing_commands_print_without_docker() -> Result<()> {
+        let (_dir, paths) = temp_paths()?;
+        run_subcommand(&paths, Command::Toolchains)?;
+        run_subcommand(
+            &paths,
+            Command::Completions {
+                shell: clap_complete::Shell::Fish,
+                bin: "claude_here".into(),
+            },
+        )?;
+        assert!(
+            completions_text(clap_complete::Shell::Bash, "claude_yolo").contains("claude_yolo")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn net_commands_read_the_session_log() -> Result<()> {
+        let (_dir, paths) = temp_paths()?;
+        let net = |action| run_subcommand(&paths, Command::Net(cli::NetArgs { action }));
+        let none = net(NetAction::Last { all: false })
+            .err()
+            .map_or_default(|e| e.to_string());
+        assert_eq!(none, "no recorded sessions");
+
+        let id = session::new_session_id();
+        let log = paths.net_log_dir();
+        std::fs::create_dir_all(&log)?;
+        let files = net::SessionFiles::new(&log, &id);
+        std::fs::write(&files.pcap, "")?;
+        let summary = net::Summary {
+            session_id: id.clone(),
+            hosts: vec![net::HostEntry {
+                host: "api.example".into(),
+                ip: "10.0.0.1".into(),
+                port: 443,
+                connections: 1,
+                bytes_out: 1,
+                bytes_in: 1,
+            }],
+            ..Default::default()
+        };
+        std::fs::write(&files.summary, serde_json::to_string(&summary)?)?;
+
+        net(NetAction::Last { all: true })?;
+        net(NetAction::Show {
+            session_id: id.clone(),
+            all: false,
+        })?;
+        net(NetAction::Top {
+            days: 7,
+            project: false,
+            limit: 5,
+        })?;
+        net(NetAction::Grep { host: "api".into() })?;
+        net(NetAction::List { limit: 5 })?;
+        net(NetAction::Prune { days: Some(30) })?;
+        assert!(files.pcap.exists(), "a fresh session survives pruning");
+        Ok(())
+    }
+
+    #[test]
+    fn dry_run_prints_the_docker_command_without_running_it() -> Result<()> {
+        let (_dir, paths) = temp_paths()?;
+        std::fs::write(paths.token_file(), "CLAUDE_CODE_OAUTH_TOKEN=x\n")?;
+        let cfg = load_config(&paths, ConfigFile::default())?;
+        assert_eq!(
+            dry_run(
+                &cfg,
+                &paths,
+                false,
+                false,
+                vec!["-p".into(), "hi there".into()]
+            )?,
+            0
+        );
+        let mut yolo = cfg.clone();
+        yolo.git_mode = config::GitMode::Full;
+        assert!(
+            dry_run(&yolo, &paths, true, false, vec![]).is_err(),
+            "yolo + full needs --i-know"
         );
         Ok(())
     }

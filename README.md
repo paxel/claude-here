@@ -5,7 +5,7 @@
 [![Security](https://github.com/paxel/claude-here/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/paxel/claude-here/actions/workflows/security.yml)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=paxel_claude-here&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=paxel_claude-here)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/paxel/claude-here/badge)](https://scorecard.dev/viewer/?uri=github.com/paxel/claude-here)
-[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A559.07%25-yellow)](https://github.com/paxel/claude-here/blob/main/.github/workflows/quality.yml)
+[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A580.30%25-green)](https://github.com/paxel/claude-here/blob/main/.github/workflows/quality.yml)
 [![Release](https://img.shields.io/github/v/release/paxel/claude-here)](https://github.com/paxel/claude-here/releases/latest)
 [![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-success)](https://github.com/paxel/claude-here/blob/main/src/lib.rs)
 [![panic-free](https://img.shields.io/badge/panic--free-linted-success)](https://github.com/paxel/claude-here/blob/main/src/lib.rs)
@@ -147,7 +147,8 @@ cd ~/src/foo && claude_here               # builds claude_here:base-u<uid> once,
 
 # one-shot prompts; everything after the tool flags goes to claude
 claude_here -p "summarize the failing tests"
-claude_here --resume                      # claude's own flags pass straight through
+claude_here --resume                      # claude's own flags pass straight through; with no
+                                          # earlier conversation here it starts a fresh one
 claude_here -- --help                     # claude's help (without -- it is claude_here's)
 
 # toolchains — any combination, one image layer each
@@ -231,7 +232,7 @@ RUN npm install -g @anthropic-ai/mcp-inspector
 | `--docker-arg ARG` | Raw `docker run` argument. Repeatable |
 | `--ca PATH` | Company CA (PEM) trusted by every client in the container (see Configuration) |
 | `--memory 8g`, `--cpus 4` | Resource limits (none by default) |
-| `--no-net-log` | Skip network capture for this run |
+| `--net-log`, `--no-net-log` | Record / do not record this run's network traffic (off by default) |
 | `--rebuild`, `--no-build` | Force image rebuild / fail instead of building |
 | `--save`, `--save-global` | Persist the given flags into project / global config |
 | `--i-know` | Required for `claude_yolo` together with `--git full` |
@@ -523,15 +524,18 @@ allowed — there is deliberately no bypass — and `claude plugin install` need
 
 ### Network recording
 
-Every session (unless `--no-net-log` / `net_capture = false` / host
-networking) leaves `~/.config/claude_here/logs/net/<session>.pcap`,
-`.summary.json` and `.session.json`. Captures are truncated to 512 bytes per
+Recording is off by default. With `net_capture = true` in a config or
+`--net-log` (and no host networking), a session leaves
+`~/.config/claude_here/logs/net/<session>.pcap` and `.session.json`. The
+`.summary.json` is built from the capture the first time `net last`, `show`,
+`top` or `grep` needs it (tshark in the base image, no network), so ending
+even a weeks-long session stays fast. Captures are truncated to 512 bytes per
 packet (enough for DNS, TLS SNI and HTTP headers; byte counts stay exact) and
 pruned after `net_retention_days` (90).
 
 ```
-claude_here net last                 # hosts of the most recent session
-claude_here net show <session>
+claude_here net last [--all]         # hosts of the most recent session
+claude_here net show <session> [--all]
 claude_here net top --days 30 [--project]
 claude_here net grep github.com
 claude_here net shark [<session>]    # termshark on the pcap, inside the image
@@ -539,8 +543,9 @@ claude_here net list | prune
 ```
 
 TLS payloads are not decrypted; you see host names (SNI/DNS), endpoints,
-connection counts and bytes. Plain HTTP requests are listed with method and
-URL. Example:
+connection counts and bytes. A host is one row however many addresses it was
+reached on, the busiest 20 first; plain HTTP requests are counted. `--all`
+shows every host and lists the requests with method and URL. Example:
 
 ```
 $ claude_here net last
@@ -549,15 +554,14 @@ project  /home/axel/src/foo
 image    claude_here:base-u1000-claude   git ro
 traffic  516 packets, 624.2 KB up / 189.9 KB down, 5 dns queries
 ┌───────────────────┬───────────────────┬───────┬──────────┬──────────┐
-│ host              ┆ ip:port           ┆ conns ┆ up       ┆ down     │
+│ host              ┆ endpoint          ┆ conns ┆ up       ┆ down     │
 ╞═══════════════════╪═══════════════════╪═══════╪══════════╪══════════╡
 │ api.anthropic.com ┆ 160.79.104.10:443 ┆ 7     ┆ 624.2 KB ┆ 189.9 KB │
 └───────────────────┴───────────────────┴───────┴──────────┴──────────┘
 pcap     /home/axel/.config/claude_here/logs/net/20260919-095014-8865.pcap
 ```
 
-Every session also prints one line at exit
-(`claude_here: net: 1 host(s), 7 connection(s), 624.2 KB up / 189.9 KB down`).
+A recorded session prints one line at exit, with the path of its capture.
 
 ### What Claude is told
 
