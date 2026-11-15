@@ -1,0 +1,11 @@
+{
+  "name": "claude-here-node-tools",
+  "private": true,
+  "description": "Global tools of the node toolchain, installed with npm ci from the lockfile.",
+  "dependencies": {
+    "pnpm": "12.18.0",
+    "typescript": "7.0.2",
+    "typescript-language-server": "6.1.0",
+    "yarn": "1.22.22"
+  }
+}

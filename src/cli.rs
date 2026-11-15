@@ -167,7 +167,10 @@ pub struct RunFlags {
     /// Container CPU limit, e.g. 4.
     #[arg(long, value_name = "N")]
     pub cpus: Option<f64>,
-    /// Disable network capture for this run.
+    /// Record this run's network traffic (off by default).
+    #[arg(long = "net-log", conflicts_with = "no_net_log")]
+    pub net_log: bool,
+    /// Do not record this run's network traffic, even when the config turns it on.
     #[arg(long = "no-net-log")]
     pub no_net_log: bool,
     /// Rebuild the whole image chain before running.
@@ -219,7 +222,11 @@ impl RunFlags {
             mcp: self.mcp.clone(),
             ssh: self.ssh.then_some(true),
             gh: self.gh.then_some(true),
-            net_capture: self.no_net_log.then_some(false),
+            net_capture: if self.net_log {
+                Some(true)
+            } else {
+                self.no_net_log.then_some(false)
+            },
             memory: self.memory.clone(),
             cpus: self.cpus,
             env,
@@ -383,9 +390,18 @@ pub struct NetArgs {
 #[derive(Debug, Subcommand)]
 pub enum NetAction {
     /// Summary of the most recent session.
-    Last,
+    Last {
+        /// Every host and every plain HTTP request, not only the busiest.
+        #[arg(long)]
+        all: bool,
+    },
     /// Summary of one session.
-    Show { session_id: String },
+    Show {
+        session_id: String,
+        /// Every host and every plain HTTP request, not only the busiest.
+        #[arg(long)]
+        all: bool,
+    },
     /// Hosts aggregated across sessions.
     Top {
         /// Look back this many days.
@@ -460,6 +476,7 @@ const BOOL_FLAGS: &[&str] = &[
     "--podman",
     "--ssh",
     "--gh",
+    "--net-log",
     "--no-net-log",
     "--rebuild",
     "--no-build",
@@ -596,6 +613,18 @@ mod tests {
         assert!(split_args(v(&["--help"])).wants_help);
         assert!(split_args(v(&["-p", "x", "-h"])).wants_help);
         assert!(split_args(v(&["--version"])).wants_version);
+    }
+
+    #[test]
+    fn net_log_turns_capture_on_and_conflicts_with_its_opposite() {
+        let on = parse(split_args(v(&["--net-log"])).tool).as_config_layer();
+        assert_eq!(on.net_capture, Some(true));
+        let unset = parse(Vec::new()).as_config_layer();
+        assert_eq!(unset.net_capture, None);
+        let mut argv = vec!["claude_here".to_string()];
+        argv.extend(v(&["--net-log", "--no-net-log"]));
+        assert!(RunFlags::try_parse_from(argv).is_err());
+        assert_eq!(split_args(v(&["--net-log", "x"])).tool, v(&["--net-log"]));
     }
 
     #[test]

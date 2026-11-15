@@ -1,5 +1,6 @@
 //! Host-side handling of per-session network captures.
 
+pub mod build;
 pub mod report;
 
 use std::fs;
@@ -154,7 +155,7 @@ pub fn print_exit_summary(paths: &HostPaths, session_id: &str, info: &SessionInf
             human_bytes(s.bytes_in)
         ),
         None if files.pcap.exists() => eprintln!(
-            "claude_here: net: capture saved to {} (no summary)",
+            "claude_here: net: capture saved to {} — `claude_here net last` for the summary",
             files.pcap.display()
         ),
         None => eprintln!("claude_here: net: no capture produced"),
@@ -212,6 +213,62 @@ mod tests {
         let removed = prune_dir(dir.path(), 90, now)?;
         assert_eq!(removed, 1);
         assert_eq!(list_sessions(dir.path()).len(), 1);
+        Ok(())
+    }
+
+    fn info(session_id: &str) -> SessionInfo {
+        use crate::config::{CloudMode, GitMode, NetMode};
+        SessionInfo {
+            tool: "claude_here".into(),
+            version: "0".into(),
+            session_id: session_id.into(),
+            image: "img".into(),
+            toolchains: vec![],
+            mcp: vec![],
+            git_mode: GitMode::Ro,
+            cloud_mode: CloudMode::None,
+            net_mode: NetMode::Full,
+            yolo: false,
+            user: "ni".into(),
+            cwd_host: "/home/axel/p".into(),
+            cwd: "/home/ni/p".into(),
+            mounts: vec![],
+            net_capture: true,
+            ssh: false,
+            gh: false,
+        }
+    }
+
+    #[test]
+    fn session_output_moves_into_the_log_and_info_is_kept() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let paths = HostPaths::new(dir.path().join("home"), dir.path().join("cfg"));
+        let id = "20261114-000000-aaaa";
+        assert_eq!(collect_session_output(&paths, id)?, 0, "no output dir");
+
+        let out = paths.net_out_dir(id);
+        fs::create_dir_all(&out)?;
+        fs::write(out.join(format!("{id}.pcap")), "pcap")?;
+        assert_eq!(collect_session_output(&paths, id)?, 1);
+        assert!(!out.exists(), "output dir removed");
+
+        print_exit_summary(&paths, id, &info(id));
+        let files = SessionFiles::new(&paths.net_log_dir(), id);
+        assert!(files.pcap.exists());
+        assert_eq!(
+            files.load_info().map(|i| i.session_id),
+            Some(id.to_string())
+        );
+
+        fs::write(&files.summary, serde_json::to_string(&Summary::default())?)?;
+        print_exit_summary(&paths, id, &info(id));
+        fs::remove_file(&files.summary)?;
+        fs::remove_file(&files.pcap)?;
+        print_exit_summary(&paths, id, &info(id));
+
+        // Retention measured from now: a session from 2026-11-14 survives 90 days.
+        assert_eq!(prune(&paths, 100_000)?, 0);
+        assert_eq!(prune(&paths, 0)?, 1);
         Ok(())
     }
 }

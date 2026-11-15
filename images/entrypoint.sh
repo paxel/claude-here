@@ -154,8 +154,13 @@ if [ -n "${TCPDUMP_PID}" ]; then
   sleep 0.5
   kill -INT "${TCPDUMP_PID}" 2>/dev/null || true
   wait "${TCPDUMP_PID}" 2>/dev/null || true
-  /usr/local/lib/claude_here/net-summary.sh \
-    "${CAP_DIR}/${CH_SESSION_ID}.pcap" "${OUT_DIR}" "${CH_SESSION_ID}" "${CH_UID}" "${CH_GID}" || true
+  # Hand the capture to the host only; the summary is built later, when
+  # `claude_here net show` asks for it, so a long session still exits fast.
+  pcap="${CAP_DIR}/${CH_SESSION_ID}.pcap"
+  if [ -f "${pcap}" ] && [ -d "${OUT_DIR}" ]; then
+    cp "${pcap}" "${OUT_DIR}/${CH_SESSION_ID}.pcap" &&
+      chown "${CH_UID}:${CH_GID}" "${OUT_DIR}/${CH_SESSION_ID}.pcap" || true
+  fi
 fi
 
 exit "${rc}"

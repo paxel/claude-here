@@ -1,0 +1,26 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Pins inside images/ that Dependabot cannot update: the pip and npm lockfiles of the toolchains and the versions of checksum-verified downloads. Cargo, GitHub Actions and the Debian digest stay with Dependabot.",
+  "extends": ["config:recommended"],
+  "includePaths": ["images/**"],
+  "enabledManagers": ["pip_requirements", "npm", "custom.regex"],
+  "schedule": ["before 6am on monday"],
+  "minimumReleaseAge": "14 days",
+  "vulnerabilityAlerts": { "minimumReleaseAge": null },
+  "packageRules": [
+    {
+      "matchFileNames": ["images/**"],
+      "groupName": "image pins"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "ARG <NAME>_VERSION=<version> under a `# renovate:` comment in the image files",
+      "managerFilePatterns": ["/^images/.+\\.dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nARG [A-Z_]+_VERSION=(?<currentValue>\\S+)"
+      ]
+    }
+  ]
+}

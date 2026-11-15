@@ -122,6 +122,9 @@ pub struct Toolchain {
     /// Toolchains pulled in automatically.
     pub implies: &'static [&'static str],
     pub dockerfile: &'static str,
+    /// Further files of the build context, `(name in the context, content)`,
+    /// such as lockfiles; they are part of the layer hash.
+    pub files: &'static [(&'static str, &'static str)],
     pub caches: &'static [Cache],
     /// Hosts this toolchain needs when the egress allowlist is on.
     pub domains: &'static [&'static str],
@@ -163,6 +166,16 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 80,
         implies: &[],
         dockerfile: NODE,
+        files: &[
+            (
+                "package.json",
+                include_str!("../images/toolchains/node/package.json"),
+            ),
+            (
+                "package-lock.json",
+                include_str!("../images/toolchains/node/package-lock.json"),
+            ),
+        ],
         caches: &[Cache {
             key: "npm",
             host: "~/.npm",
@@ -193,6 +206,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 90,
         implies: &[],
         dockerfile: UV,
+        files: &[],
         caches: &[Cache {
             key: "uv",
             host: "~/.cache/uv",
@@ -216,6 +230,20 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 100,
         implies: &["node", "uv"],
         dockerfile: PYTHON,
+        files: &[
+            (
+                "requirements.txt",
+                include_str!("../images/toolchains/python/requirements.txt"),
+            ),
+            (
+                "pyright-package.json",
+                include_str!("../images/toolchains/python/package.json"),
+            ),
+            (
+                "pyright-package-lock.json",
+                include_str!("../images/toolchains/python/package-lock.json"),
+            ),
+        ],
         caches: &[Cache {
             key: "pip",
             host: "~/.cache/pip",
@@ -239,6 +267,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 30,
         implies: &[],
         dockerfile: JVM,
+        files: &[],
         caches: &[
             Cache {
                 key: "m2",
@@ -277,6 +306,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 35,
         implies: &["jvm"],
         dockerfile: ANDROID,
+        files: &[],
         caches: &[Cache {
             key: "android",
             host: "~/Android/Sdk",
@@ -295,6 +325,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 40,
         implies: &[],
         dockerfile: RUST,
+        files: &[],
         caches: &[Cache {
             key: "cargo",
             host: "~/.cargo",
@@ -324,6 +355,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 60,
         implies: &[],
         dockerfile: GO,
+        files: &[],
         caches: &[Cache {
             key: "go",
             host: "~/go/pkg/mod",
@@ -352,6 +384,10 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 70,
         implies: &[],
         dockerfile: CPP,
+        files: &[(
+            "requirements.txt",
+            include_str!("../images/toolchains/cpp/requirements.txt"),
+        )],
         caches: &[Cache {
             key: "conan",
             host: "~/.conan2",
@@ -383,6 +419,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 10,
         implies: &[],
         dockerfile: DART,
+        files: &[],
         caches: &[Cache {
             key: "pub",
             host: "~/.pub-cache",
@@ -411,6 +448,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 110,
         implies: &[],
         dockerfile: DOCS,
+        files: &[],
         caches: &[],
         domains: &["github.com", "objects.githubusercontent.com"],
         lsp: &[],
@@ -424,6 +462,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 130,
         implies: &[],
         dockerfile: K8S,
+        files: &[],
         caches: &[],
         domains: &[
             "dl.k8s.io",
@@ -442,6 +481,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 140,
         implies: &[],
         dockerfile: TERRAFORM,
+        files: &[],
         caches: &[],
         domains: &["releases.hashicorp.com", "registry.terraform.io"],
         lsp: &[],
@@ -455,6 +495,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 120,
         implies: &[],
         dockerfile: AWS,
+        files: &[],
         caches: &[],
         domains: &["awscli.amazonaws.com"],
         lsp: &[],
@@ -468,6 +509,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 20,
         implies: &[],
         dockerfile: GCLOUD,
+        files: &[],
         caches: &[],
         domains: &["dl.google.com", "googleapis.com"],
         lsp: &[],
@@ -481,6 +523,10 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 50,
         implies: &[],
         dockerfile: AZURE,
+        files: &[(
+            "requirements.txt",
+            include_str!("../images/toolchains/azure/requirements.txt"),
+        )],
         caches: &[],
         domains: &["pypi.org", "files.pythonhosted.org"],
         lsp: &[],
@@ -494,6 +540,7 @@ pub const TOOLCHAINS: &[Toolchain] = &[
         order: 150,
         implies: &[],
         dockerfile: DOCKER,
+        files: &[],
         caches: &[],
         // Subdomains are included by the allowlist, so `docker.io` covers
         // registry-1, auth and index; the Hub's blobs come from Cloudflare.
@@ -816,5 +863,61 @@ mod tests {
         let d = domains(&chain);
         assert!(d.contains(&"api.anthropic.com".to_string()));
         assert!(d.contains(&"static.crates.io".to_string()));
+    }
+
+    #[test]
+    fn every_copied_file_is_in_the_build_context() {
+        for t in TOOLCHAINS {
+            for line in t.dockerfile.lines() {
+                let Some(rest) = line.trim().strip_prefix("COPY ") else {
+                    continue;
+                };
+                let words: Vec<&str> = rest.split_whitespace().collect();
+                let sources = &words[..words.len() - 1];
+                for src in sources {
+                    assert!(
+                        t.files.iter().any(|(name, _)| name == src),
+                        "{}: COPY {src} is not in its files",
+                        t.name
+                    );
+                }
+            }
+            for (name, content) in t.files {
+                assert!(!content.is_empty(), "{}: {name} is empty", t.name);
+                assert!(
+                    t.dockerfile.contains(name),
+                    "{}: {name} is shipped but never copied",
+                    t.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pip_and_npm_install_only_locked_packages() {
+        for t in TOOLCHAINS {
+            for line in t.dockerfile.lines() {
+                if line.contains("pip install") {
+                    assert!(
+                        line.contains("--require-hashes") && line.contains("--no-deps"),
+                        "{}: {line}",
+                        t.name
+                    );
+                }
+                assert!(!line.contains("npm install"), "{}: {line}", t.name);
+                let piped_into_shell = line.split('|').skip(1).any(|cmd| {
+                    let cmd = cmd.trim_start();
+                    ["sh", "bash"]
+                        .iter()
+                        .any(|sh| cmd == *sh || cmd.starts_with(&format!("{sh} ")))
+                });
+                assert!(!piped_into_shell, "{}: {line}", t.name);
+            }
+        }
+        for (name, content) in TOOLCHAINS.iter().flat_map(|t| t.files) {
+            if name.ends_with("requirements.txt") {
+                assert!(content.contains("--hash=sha256:"), "{name}");
+            }
+        }
     }
 }

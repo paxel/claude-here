@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Summarize a session capture with tshark and hand pcap + summary to the host
-# log directory. Runs as root at the end of the entrypoint.
-# Usage: net-summary.sh <pcap> <out_dir> <session_id> <uid> <gid>
+# Summarize a session capture with tshark into <out_dir>/<session_id>.summary.json.
+# Run on demand by `claude_here net show` in a throwaway container of the base
+# image, as the host user, with the capture mounted read-only.
+# Usage: net-summary.sh <pcap> <out_dir> <session_id>
 set -euo pipefail
-pcap="$1"; out_dir="$2"; sid="$3"; uid="$4"; gid="$5"
+pcap="$1"; out_dir="$2"; sid="$3"
 [ -f "${pcap}" ] || exit 0
 [ -d "${out_dir}" ] || exit 0
 
@@ -66,6 +67,3 @@ jq -n \
         bytes_out: (.[4] | tonumber), bytes_in: (.[5] | tonumber) })),
     http_requests: ($http | split("\n") | map(select(length > 0)))
   }' > "${out_dir}/${sid}.summary.json"
-
-cp "${pcap}" "${out_dir}/${sid}.pcap"
-chown "${uid}:${gid}" "${out_dir}/${sid}.pcap" "${out_dir}/${sid}.summary.json"

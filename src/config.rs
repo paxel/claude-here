@@ -418,7 +418,7 @@ impl From<ConfigFile> for Config {
             net_mode: f.net_mode.unwrap_or_default(),
             ssh: f.ssh.unwrap_or(false),
             gh: f.gh.unwrap_or(false),
-            net_capture: f.net_capture.unwrap_or(true),
+            net_capture: f.net_capture.unwrap_or(false),
             net_retention_days: f.net_retention_days.unwrap_or(DEFAULT_NET_RETENTION_DAYS),
             update_check: f.update_check.unwrap_or(true),
             claude_version: f.claude_version.unwrap_or_else(|| "latest".to_string()),
@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(c.git_mode, GitMode::Ro);
         assert_eq!(c.cloud_mode, CloudMode::None);
         assert_eq!(c.net_mode, NetMode::Full);
-        assert!(c.net_capture);
+        assert!(!c.net_capture, "capture is opt-in");
         assert!(c.update_check);
         assert_eq!(c.net_retention_days, 90);
         assert!(!c.ssh && !c.gh);

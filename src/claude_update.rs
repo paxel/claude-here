@@ -22,7 +22,7 @@ use crate::paths::HostPaths;
 use crate::session::now_secs;
 use crate::update::{MAX_AGE_SECS, is_newer, suppressed_by_env};
 
-/// Where `install.sh` itself reads the version of a channel from.
+/// Where Claude's releases and the version of each channel are published.
 pub const RELEASES: &str = "https://downloads.claude.ai/claude-code-releases";
 /// Seconds the check may take before it is abandoned.
 const TIMEOUT_SECS: u64 = 5;
@@ -97,7 +97,11 @@ fn fetch(channel: &str) -> Option<String> {
 /// Fetch and store the newest release of `channel`, keeping the accepted
 /// version. Every failure is silent and leaves the cache untouched.
 pub fn refresh(paths: &HostPaths, channel: &str) -> Option<String> {
-    let latest = fetch(channel)?;
+    record_latest(paths, channel, fetch(channel)?)
+}
+
+/// Store `latest` as the newest release of `channel`, keeping what was accepted.
+fn record_latest(paths: &HostPaths, channel: &str, latest: String) -> Option<String> {
     let accepted = read_cache(paths).and_then(|c| c.accepted);
     write_cache(
         paths,
@@ -210,7 +214,7 @@ pub fn prompt(paths: &HostPaths, cfg: &Config, tty: bool) {
 /// version. With nothing accepted yet (first start) the newest release is
 /// taken and recorded; it is fetched right away when the cache has none,
 /// unless update checks are off. Without any answer the channel name goes to
-/// `install.sh`, which resolves it during the build.
+/// the Claude layer, which resolves it during the build.
 pub fn version_for_build(paths: &HostPaths, cfg: &Config) -> String {
     let Some(ch) = channel(&cfg.claude_version) else {
         return cfg.claude_version.clone();
@@ -395,6 +399,50 @@ mod tests {
             read_cache(&paths),
             Some(cache("latest", "2.1.282", Some("2.1.282")))
         );
+        Ok(())
+    }
+
+    fn paths_and_cfg(update_check: bool) -> Result<(tempfile::TempDir, HostPaths, Config)> {
+        let tmp = tempfile::tempdir()?;
+        let paths = HostPaths::new(tmp.path().join("h"), tmp.path().join("cfg"));
+        std::fs::create_dir_all(&paths.config_dir)?;
+        let layers = crate::config::Layers::load(tmp.path().join("g"), tmp.path().join("p"))?;
+        let cfg = layers.resolve(crate::config::ConfigFile {
+            update_check: Some(update_check),
+            ..Default::default()
+        });
+        Ok((tmp, paths, cfg))
+    }
+
+    #[test]
+    fn the_build_takes_the_pin_the_accepted_or_the_known_version() -> Result<()> {
+        let (_tmp, paths, mut cfg) = paths_and_cfg(false)?;
+        let ch = channel(&cfg.claude_version).map(str::to_string);
+        let Some(ch) = ch else {
+            return Ok(());
+        };
+        // Nothing known and checks off: the channel name, resolved by the build.
+        assert_eq!(version_for_build(&paths, &cfg), ch);
+
+        // A known newest release is taken and recorded as accepted.
+        record_latest(&paths, &ch, "2.1.300".into());
+        assert_eq!(version_for_build(&paths, &cfg), "2.1.300");
+        assert_eq!(
+            read_cache(&paths).and_then(|c| c.accepted).as_deref(),
+            Some("2.1.300")
+        );
+
+        // A newer release later does not move the accepted version.
+        record_latest(&paths, &ch, "2.1.311".into());
+        assert_eq!(version_for_build(&paths, &cfg), "2.1.300");
+        accept(&paths, &ch, "2.1.311")?;
+        assert_eq!(version_for_build(&paths, &cfg), "2.1.311");
+
+        cfg.claude_version = "2.0.0".into();
+        assert_eq!(version_for_build(&paths, &cfg), "2.0.0", "a pin wins");
+        assert_eq!(update_now(&paths, &cfg)?, "2.0.0");
+        // With a pin there is nothing to offer.
+        prompt(&paths, &cfg, false);
         Ok(())
     }
 }

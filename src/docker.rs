@@ -357,9 +357,184 @@ impl Build {
     }
 }
 
+/// A stand-in `docker` for unit tests: a shell script that logs every call
+/// and keeps images (labels and ids) in a state directory, so code that
+/// drives docker runs without a daemon.
+#[cfg(test)]
+pub mod fake {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+
+    use anyhow::Result;
+
+    use super::Docker;
+
+    const SCRIPT: &str = r#"#!/bin/sh
+state="__STATE__"
+printf '%s\n' "$*" >> "$state/calls"
+img_dir() { printf '%s/images/%s' "$state" "$(printf '%s' "$1" | tr '/:' '__')"; }
+case "$1" in
+  version)
+    [ -f "$state/down" ] && { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
+    echo 27.0 ;;
+  image)
+    [ "$2" = inspect ] || exit 1
+    if [ "$3" = --format ]; then fmt="$4"; img="$5"; else fmt=""; img="$3"; fi
+    d="$(img_dir "$img")"
+    [ -d "$d" ] || { echo "No such image: $img" >&2; exit 1; }
+    case "$fmt" in
+      *Labels*) key="$(printf '%s' "$fmt" | sed 's/.*Labels "\(.*\)".*/\1/')"
+                cat "$d/label.$key" 2>/dev/null || true ;;
+      *.Id*) cat "$d/id" ;;
+      *) echo '[{}]' ;;
+    esac ;;
+  build)
+    [ -f "$state/fail-build" ] && exit 1
+    shift; tag=""; d=""
+    while [ $# -gt 1 ]; do
+      case "$1" in
+        -t) tag="$2"; d="$(img_dir "$tag")"; rm -rf "$d"; mkdir -p "$d"; shift 2 ;;
+        --label) printf '%s' "${2#*=}" > "$d/label.${2%%=*}"; shift 2 ;;
+        --build-arg|--secret) shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    cp "$1/Dockerfile" "$d/Dockerfile"
+    ls "$1" > "$d/context"
+    printf 'sha256:%s' "$(cat "$d"/label.* 2>/dev/null | cksum | cut -d' ' -f1)" > "$d/id" ;;
+  run)
+    exit "$(cat "$state/run-exit" 2>/dev/null || echo 0)" ;;
+  *) exit 0 ;;
+esac
+"#;
+
+    pub struct FakeDocker {
+        pub dir: tempfile::TempDir,
+        pub docker: Docker,
+    }
+
+    impl FakeDocker {
+        pub fn new() -> Result<Self> {
+            let dir = tempfile::tempdir()?;
+            fs::create_dir_all(dir.path().join("images"))?;
+            let bin = dir.path().join("docker");
+            let text = SCRIPT.replace("__STATE__", &dir.path().display().to_string());
+            fs::write(&bin, text)?;
+            fs::set_permissions(&bin, fs::Permissions::from_mode(0o755))?;
+            let docker = Docker {
+                binary: bin.display().to_string(),
+            };
+            Ok(Self { dir, docker })
+        }
+
+        fn image_dir(&self, tag: &str) -> PathBuf {
+            self.dir
+                .path()
+                .join("images")
+                .join(tag.replace(['/', ':'], "_"))
+        }
+
+        /// Every call so far, one argument line each.
+        pub fn calls(&self) -> Vec<String> {
+            fs::read_to_string(self.dir.path().join("calls"))
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        }
+
+        /// The `docker build` calls so far, by tag.
+        pub fn built(&self) -> Vec<String> {
+            self.calls()
+                .iter()
+                .filter_map(|c| c.strip_prefix("build -t "))
+                .filter_map(|c| c.split_whitespace().next())
+                .map(str::to_string)
+                .collect()
+        }
+
+        /// The Dockerfile and context file names an image was built from.
+        pub fn built_from(&self, tag: &str) -> (String, String) {
+            let d = self.image_dir(tag);
+            (
+                fs::read_to_string(d.join("Dockerfile")).unwrap_or_default(),
+                fs::read_to_string(d.join("context")).unwrap_or_default(),
+            )
+        }
+
+        pub fn label(&self, tag: &str, key: &str) -> Option<String> {
+            fs::read_to_string(self.image_dir(tag).join(format!("label.{key}"))).ok()
+        }
+
+        /// An image that exists locally with these labels.
+        pub fn add_image(&self, tag: &str, labels: &[(&str, &str)]) -> Result<()> {
+            let d = self.image_dir(tag);
+            fs::create_dir_all(&d)?;
+            for (k, v) in labels {
+                fs::write(d.join(format!("label.{k}")), v)?;
+            }
+            fs::write(d.join("id"), format!("sha256:{tag}"))?;
+            Ok(())
+        }
+
+        pub fn set(&self, flag: &str, content: &str) -> Result<()> {
+            fs::write(self.dir.path().join(flag), content)?;
+            Ok(())
+        }
+
+        pub fn path(&self) -> &Path {
+            self.dir.path()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_wrapper_reports_what_docker_answers() -> Result<()> {
+        let f = fake::FakeDocker::new()?;
+        f.docker.check()?;
+        f.set("down", "")?;
+        let err = f.docker.check().err().map_or_default(|e| e.to_string());
+        assert!(err.starts_with("docker daemon not reachable"), "{err}");
+
+        assert_eq!(f.docker.image_label("missing", "k"), None);
+        assert_eq!(f.docker.image_id("missing"), None);
+        f.add_image("img:1", &[("k", "v"), ("empty", "")])?;
+        assert_eq!(f.docker.image_label("img:1", "k").as_deref(), Some("v"));
+        assert_eq!(f.docker.image_label("img:1", "empty"), None);
+        assert_eq!(f.docker.image_id("img:1").as_deref(), Some("sha256:img:1"));
+        assert_eq!(f.docker.output(&["image", "inspect", "img:1"])?, "[{}]");
+        assert!(f.docker.output(&["image", "inspect", "missing"]).is_err());
+
+        assert_eq!(f.docker.run_inherit(&["run".into()])?, 0);
+        f.set("run-exit", "3")?;
+        assert_eq!(f.docker.run_inherit(&["run".into()])?, 3);
+
+        let ctx = tempfile::tempdir()?;
+        std::fs::write(ctx.path().join("Dockerfile"), "FROM scratch\n")?;
+        let build = Build {
+            context: ctx.path().to_path_buf(),
+            tag: "t:1".into(),
+            labels: vec![("claude_here.hash".into(), "abc".into())],
+            ..Default::default()
+        };
+        f.docker.build(&build)?;
+        assert_eq!(f.label("t:1", "claude_here.hash").as_deref(), Some("abc"));
+        f.set("fail-build", "")?;
+        let err = f.docker.build(&build).err().map(|e| e.to_string());
+        assert_eq!(err.as_deref(), Some("docker build of t:1 failed (exit 1)"));
+
+        let missing = Docker {
+            binary: f.path().join("nope").display().to_string(),
+        };
+        assert!(missing.check().is_err());
+        assert!(missing.run_inherit(&[]).is_err());
+        Ok(())
+    }
 
     #[test]
     fn args_are_ordered_and_hardened() {
