@@ -129,7 +129,9 @@ impl RunSpec {
         a.extend(["--pids-limit".into(), PIDS_LIMIT.to_string()]);
         a.extend(["--tmpfs".into(), "/tmp:exec".into()]);
         if let Some(m) = &self.memory {
+            // Swap equal to the limit means no swap on top of it.
             a.extend(["--memory".into(), m.clone()]);
+            a.extend(["--memory-swap".into(), m.clone()]);
         }
         if let Some(c) = &self.cpus {
             a.extend(["--cpus".into(), c.clone()]);
@@ -196,6 +198,7 @@ mod run_shape_tests {
     fn default_shape_keeps_nnp_and_docker_profile() {
         let s = RunSpec::default().to_args().join(" ");
         assert!(s.contains("--security-opt no-new-privileges"));
+        assert!(!s.contains("--memory"), "no limit, no swap flag");
         assert!(!s.contains("seccomp="));
     }
 }
@@ -568,7 +571,7 @@ mod tests {
         assert!(s.starts_with("run --rm --init -it --name claude_here-foo-abc --hostname claude-here --cap-drop ALL --cap-add NET_RAW"));
         assert!(s.contains("--cap-add FOWNER --cap-add NET_ADMIN"));
         assert!(s.contains("--security-opt no-new-privileges --pids-limit 4096"));
-        assert!(s.contains("--memory 8g"));
+        assert!(s.contains("--memory 8g --memory-swap 8g"));
         assert!(!s.contains("--cpus"));
         assert!(s.contains("-w /home/ni/foo -v /home/axel/foo:/home/ni/foo -v /home/axel/foo/.git:/home/ni/foo/.git:ro"));
         assert!(
