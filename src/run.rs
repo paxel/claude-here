@@ -944,8 +944,6 @@ fn stage_net_summaries(paths: &HostPaths, session_id: &str, project: &Path) -> R
     Ok(staged)
 }
 
-/// Make sure the container `.claude.json` says onboarding is done, otherwise
-/// interactive sessions start with the theme/login wizard despite the token.
 /// Hand the host's global git ignore to the container's git.
 ///
 /// Not mounted at `~/.config/git/ignore`: docker would create `~/.config`
@@ -969,6 +967,8 @@ fn mount_git_ignore(
     mounts.push(Mount::ro(host, target));
 }
 
+/// Make sure the container `.claude.json` says onboarding is done, otherwise
+/// interactive sessions start with the theme/login wizard despite the token.
 fn ensure_onboarded(path: &Path) -> Result<()> {
     let mut obj = crate::init::read_json_object(path);
     if obj.get("hasCompletedOnboarding") == Some(&serde_json::Value::Bool(true)) {
