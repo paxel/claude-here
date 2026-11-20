@@ -32,7 +32,7 @@ pub const CONFIG_TEMPLATE: &str = "\
 #                               # (CLAUDE_HERE_NO_UPDATE_CHECK=1 turns it off too)
 # claude_version = \"latest\"   # \"latest\" or \"stable\" follows that channel (checked daily,
 #                               # offered at start); \"2.1.274\" pins and stops the check
-# memory = \"8g\"
+# memory = \"8g\"               # the default; \"none\" removes the limit
 # cpus = 4
 # env = [\"EDITOR=nano\", \"MY_HOST_VAR\"]
 # docker_args = []
@@ -410,7 +410,7 @@ pub fn copy_tree(src: &Path, dest: &Path, rw: &PathRewriter) -> Result<()> {
 }
 
 /// `$XDG_CONFIG_HOME`, or `~/.config`.
-fn xdg_config_home(paths: &HostPaths) -> PathBuf {
+pub(crate) fn xdg_config_home(paths: &HostPaths) -> PathBuf {
     std::env::var_os("XDG_CONFIG_HOME").map_or_else(|| paths.home.join(".config"), PathBuf::from)
 }
 

@@ -5,7 +5,7 @@
 [![Security](https://github.com/paxel/claude-here/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/paxel/claude-here/actions/workflows/security.yml)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=paxel_claude-here&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=paxel_claude-here)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/paxel/claude-here/badge)](https://scorecard.dev/viewer/?uri=github.com/paxel/claude-here)
-[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A580.30%25-green)](https://github.com/paxel/claude-here/blob/main/.github/workflows/quality.yml)
+[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A580.46%25-green)](https://github.com/paxel/claude-here/blob/main/.github/workflows/quality.yml)
 [![Release](https://img.shields.io/github/v/release/paxel/claude-here)](https://github.com/paxel/claude-here/releases/latest)
 [![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-success)](https://github.com/paxel/claude-here/blob/main/src/lib.rs)
 [![panic-free](https://img.shields.io/badge/panic--free-linted-success)](https://github.com/paxel/claude-here/blob/main/src/lib.rs)
@@ -53,7 +53,9 @@ claude_yolo                      # --dangerously-skip-permissions, still sandbox
   entrypoint needs are dropped, `no-new-privileges` is set.
 * **Ephemeral containers, persistent state where it matters.** Each run is a
   fresh `--rm` container. Claude's own state (`~/.claude`: sessions, memory,
-  plugins) lives in `~/.config/claude_here/home/` and persists.
+  plugins) lives in `~/.config/claude_here/home/` and persists. The
+  container's `/tmp` is `/tmp/claude_here-<uid>/<session>` on the host (on
+  disk, not in RAM; `0700`), deleted when the session ends.
 
 ## Install
 
@@ -231,7 +233,7 @@ RUN npm install -g @anthropic-ai/mcp-inspector
 | `--ssh`, `--gh` | Forward ssh agent / hand the host's `gh auth token` to the container as `GH_TOKEN` (per-run 0600 env-file, never on the command line). `full` mode only |
 | `--docker-arg ARG` | Raw `docker run` argument. Repeatable |
 | `--ca PATH` | Company CA (PEM) trusted by every client in the container (see Configuration) |
-| `--memory 8g`, `--cpus 4` | Resource limits (none by default) |
+| `--memory 8g`, `--cpus 4` | Resource limits. Memory defaults to `8g`, `--memory none` removes it; no CPU limit by default |
 | `--net-log`, `--no-net-log` | Record / do not record this run's network traffic (off by default) |
 | `--rebuild`, `--no-build` | Force image rebuild / fail instead of building |
 | `--save`, `--save-global` | Persist the given flags into project / global config |

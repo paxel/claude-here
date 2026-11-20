@@ -161,7 +161,7 @@ pub struct RunFlags {
     /// Company CA (PEM) trusted by every client in the container.
     #[arg(long, value_name = "PATH")]
     pub ca: Option<String>,
-    /// Container memory limit, e.g. 8g.
+    /// Container memory limit, e.g. 12g (default 8g; `none` for no limit).
     #[arg(long, value_name = "SIZE")]
     pub memory: Option<String>,
     /// Container CPU limit, e.g. 4.

@@ -37,6 +37,8 @@ pub struct HostFacts {
     pub gid: u32,
     pub tty: bool,
     pub gitconfig: Option<PathBuf>,
+    /// The host's global git ignore file (`$XDG_CONFIG_HOME/git/ignore`).
+    pub gitignore: Option<PathBuf>,
     pub ssh_auth_sock: Option<PathBuf>,
     pub known_hosts: Option<PathBuf>,
     /// Token from `gh auth token` on the host (keyring-backed logins keep it
@@ -73,6 +75,11 @@ impl HostFacts {
             gid,
             tty: std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
             gitconfig: exists(paths.home.join(".gitconfig")),
+            gitignore: exists(
+                crate::init::xdg_config_home(paths)
+                    .join("git")
+                    .join("ignore"),
+            ),
             ssh_auth_sock,
             known_hosts: exists(paths.home.join(".ssh").join("known_hosts")),
             gh_token: (cfg.gh && cfg.git_mode == GitMode::Full)
@@ -252,6 +259,9 @@ pub fn assemble(
     mounts.push(Mount::rw(paths.container_home(), chome.join(".claude")));
     if let Some(gc) = &facts.gitconfig {
         mounts.push(Mount::ro(gc, chome.join(".gitconfig")));
+    }
+    if let Some(gi) = &facts.gitignore {
+        mount_git_ignore(gi, &chome, &mut mounts, &mut env);
     }
 
     let net_capture = cfg.net_capture && !uses_host_network(&cfg.docker_args);
@@ -439,6 +449,10 @@ fn add_bundled_mounts(
     mounts: &mut Vec<Mount>,
     env: &mut Vec<(String, String)>,
 ) {
+    mounts.push(Mount::rw(
+        session_tmp_dir(facts.uid, &req.session_id),
+        "/tmp",
+    ));
     let plugin = chome.join(crate::plugin::CONTAINER_DIR);
     mounts.push(Mount::ro(paths.plugin_dir(), &plugin));
     env.push(("CH_PLUGIN_DIR".to_string(), plugin.display().to_string()));
@@ -822,6 +836,88 @@ pub fn prepare_host_dirs(
     Ok(granted)
 }
 
+/// The host directory holding every session's `/tmp` of this user.
+fn session_tmp_root(uid: u32) -> PathBuf {
+    PathBuf::from(format!("/tmp/claude_here-{uid}"))
+}
+
+/// The host directory mounted as the container's `/tmp`. On disk, not in
+/// RAM like a tmpfs, and outside the container's memory limit. Safe to
+/// print: the CodeQL model in `.github/codeql/extensions` says so.
+pub fn session_tmp_dir(uid: u32, session_id: &str) -> PathBuf {
+    session_tmp_root(uid).join(session_id)
+}
+
+/// Create this session's `/tmp` directory, `0700` like its parent.
+pub fn prepare_session_tmp(uid: u32, session_id: &str) -> Result<()> {
+    create_session_tmp(&session_tmp_root(uid), uid, session_id).map(|_| ())
+}
+
+/// The root lives in the shared host `/tmp`, so anybody could have created
+/// it first: it must be a real directory, ours and private, or nothing is
+/// written into it.
+fn create_session_tmp(root: &Path, uid: u32, session_id: &str) -> Result<PathBuf> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    match fs::DirBuilder::new().mode(0o700).create(root) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e).with_context(|| format!("creating {}", root.display())),
+    }
+    let meta =
+        fs::symlink_metadata(root).with_context(|| format!("checking {}", root.display()))?;
+    if !meta.file_type().is_dir() || meta.uid() != uid || meta.mode() & 0o777 != 0o700 {
+        bail!(
+            "{} is not a directory owned by uid {uid} with mode 0700; remove it and start again",
+            root.display()
+        );
+    }
+    let dir = root.join(session_id);
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&dir)
+        .with_context(|| format!("creating {}", dir.display()))?;
+    Ok(dir)
+}
+
+/// Delete this session's `/tmp` directory, as far as the host user can: a
+/// file made by container root stays, and one warning names the directory.
+pub fn remove_session_tmp(dir: &Path) {
+    if remove_what_we_can(dir) {
+        return;
+    }
+    eprintln!(
+        "claude_here: note: could not remove everything in {}",
+        dir.display()
+    );
+}
+
+/// Remove `path` and everything below it, carrying on past failures.
+/// Directories are made writable first, so a read-only one written by a
+/// tool does not keep its files. Returns whether everything is gone.
+fn remove_what_we_can(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return !path.exists();
+    };
+    if !meta.file_type().is_dir() {
+        return fs::remove_file(path).is_ok();
+    }
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+    let mut all = true;
+    match fs::read_dir(path) {
+        Ok(entries) => {
+            for entry in entries {
+                match entry {
+                    Ok(e) => all &= remove_what_we_can(&e.path()),
+                    Err(_) => all = false,
+                }
+            }
+        }
+        Err(_) => all = false,
+    }
+    fs::remove_dir(path).is_ok() && all
+}
+
 /// Assemble the read-only view of earlier network activity: the `.summary.json`
 /// files of *this* project and nothing else. The pcap files never travel — they
 /// are captured with `-s 512` and therefore contain request headers, including
@@ -846,6 +942,29 @@ fn stage_net_summaries(paths: &HostPaths, session_id: &str, project: &Path) -> R
         staged = staged.saturating_add(1);
     }
     Ok(staged)
+}
+
+/// Hand the host's global git ignore to the container's git.
+///
+/// Not mounted at `~/.config/git/ignore`: docker would create `~/.config`
+/// owned by root. Git is pointed at the file through its environment.
+fn mount_git_ignore(
+    host: &Path,
+    chome: &Path,
+    mounts: &mut Vec<Mount>,
+    env: &mut Vec<(String, String)>,
+) {
+    let target = chome.join(".claude_here").join("gitignore");
+    env.push(("GIT_CONFIG_COUNT".to_string(), "1".to_string()));
+    env.push((
+        "GIT_CONFIG_KEY_0".to_string(),
+        "core.excludesFile".to_string(),
+    ));
+    env.push((
+        "GIT_CONFIG_VALUE_0".to_string(),
+        target.to_string_lossy().into_owned(),
+    ));
+    mounts.push(Mount::ro(host, target));
 }
 
 /// Make sure the container `.claude.json` says onboarding is done, otherwise
@@ -902,6 +1021,10 @@ pub fn execute(
     // Assemble once for the mount list, grant the MCP servers, then assemble
     // again so the session info reports what was actually granted.
     let probe = assemble(cfg, paths, &facts, &git, &req)?;
+    // Before prepare_host_dirs, which would create a missing mount source
+    // with the default mode.
+    prepare_session_tmp(facts.uid, &req.session_id)?;
+    let tmp_dir = session_tmp_dir(facts.uid, &req.session_id);
     req.mcp = prepare_host_dirs(
         paths,
         cfg,
@@ -948,6 +1071,7 @@ pub fn execute(
     let code = docker.run_inherit(&assembled.spec.to_args());
     let _ = fs::remove_file(&gh_file);
     let _ = fs::remove_dir_all(paths.net_view_dir(&req.session_id));
+    remove_session_tmp(&tmp_dir);
     let code = code?;
     // After the session: the wait is never in front of the work.
     crate::update::refresh_if_stale(paths, cfg.update_check);
@@ -1051,6 +1175,7 @@ mod tests {
             gid: 1000,
             tty: true,
             gitconfig: Some("/home/axel/.gitconfig".into()),
+            gitignore: Some("/home/axel/.config/git/ignore".into()),
             ssh_auth_sock: Some("/run/user/1000/ssh".into()),
             known_hosts: Some("/home/axel/.ssh/known_hosts".into()),
             gh_token: Some("gho_test".into()),
@@ -1092,6 +1217,106 @@ mod tests {
             toolchains: toolchain::resolve(&owned).unwrap_or_default(),
             ..req()
         }
+    }
+
+    #[test]
+    fn tmp_is_the_session_dir_under_the_host_tmp_not_a_tmpfs() -> Result<()> {
+        let c = cfg(ConfigFile::default());
+        let a = assemble(&c, &paths(), &facts(), &git(), &req())?;
+        let s = a.spec.to_args().join(" ");
+        assert!(s.contains("-v /tmp/claude_here-1000/20260919-120000-abcd:/tmp "));
+        assert!(!s.contains("--tmpfs"));
+        Ok(())
+    }
+
+    fn uid_of(p: &Path) -> Result<u32> {
+        use std::os::unix::fs::MetadataExt;
+        Ok(fs::metadata(p)?.uid())
+    }
+
+    fn mode_of(p: &Path) -> Result<u32> {
+        use std::os::unix::fs::MetadataExt;
+        Ok(fs::symlink_metadata(p)?.mode() & 0o777)
+    }
+
+    #[test]
+    fn session_tmp_is_created_private() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let uid = uid_of(tmp.path())?;
+        let root = tmp.path().join("claude_here-x");
+        let dir = create_session_tmp(&root, uid, "s1")?;
+        assert_eq!(dir, root.join("s1"));
+        assert_eq!(mode_of(&root)?, 0o700);
+        assert_eq!(mode_of(&dir)?, 0o700);
+        // A second session reuses the root.
+        create_session_tmp(&root, uid, "s2")?;
+        assert!(root.join("s2").is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn session_tmp_refuses_a_root_that_is_not_ours_and_private() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir()?;
+        let uid = uid_of(tmp.path())?;
+
+        let open = tmp.path().join("open");
+        fs::create_dir(&open)?;
+        fs::set_permissions(&open, fs::Permissions::from_mode(0o755))?;
+        assert!(create_session_tmp(&open, uid, "s").is_err());
+        assert!(!open.join("s").exists());
+
+        let target = tmp.path().join("target");
+        fs::create_dir(&target)?;
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o700))?;
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&target, &link)?;
+        assert!(create_session_tmp(&link, uid, "s").is_err());
+        assert!(!target.join("s").exists());
+
+        let theirs = tmp.path().join("theirs");
+        assert!(create_session_tmp(&theirs, uid.wrapping_add(1), "s").is_err());
+        assert!(!theirs.join("s").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn removing_session_tmp_gets_past_read_only_dirs() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir()?;
+        let dir = tmp.path().join("s");
+        let locked = dir.join("a").join("locked");
+        fs::create_dir_all(&locked)?;
+        fs::write(locked.join("f"), "x")?;
+        fs::write(dir.join("g"), "y")?;
+        std::os::unix::fs::symlink(tmp.path(), dir.join("up"))?;
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o500))?;
+        assert!(remove_what_we_can(&dir));
+        assert!(!dir.exists());
+        assert!(tmp.path().exists(), "a symlink is removed, not followed");
+        remove_session_tmp(&tmp.path().join("gone"));
+        Ok(())
+    }
+
+    #[test]
+    fn global_git_ignore_is_mounted_and_git_is_pointed_at_it() -> Result<()> {
+        let c = cfg(ConfigFile::default());
+        let a = assemble(&c, &paths(), &facts(), &git(), &req())?;
+        let s = a.spec.to_args().join(" ");
+        assert!(s.contains("-v /home/axel/.config/git/ignore:/home/ni/.claude_here/gitignore:ro"));
+        assert!(s.contains("-e GIT_CONFIG_COUNT=1"));
+        assert!(s.contains("-e GIT_CONFIG_KEY_0=core.excludesFile"));
+        assert!(s.contains("-e GIT_CONFIG_VALUE_0=/home/ni/.claude_here/gitignore"));
+
+        let none = HostFacts {
+            gitignore: None,
+            ..facts()
+        };
+        let a = assemble(&c, &paths(), &none, &git(), &req())?;
+        let s = a.spec.to_args().join(" ");
+        assert!(!s.contains("gitignore"));
+        assert!(!s.contains("GIT_CONFIG_"));
+        Ok(())
     }
 
     #[test]
@@ -1272,6 +1497,7 @@ mod tests {
         let hf = HostFacts {
             cwd: project.clone(),
             gitconfig: None,
+            gitignore: None,
             ssh_auth_sock: None,
             known_hosts: None,
             gh_token: None,

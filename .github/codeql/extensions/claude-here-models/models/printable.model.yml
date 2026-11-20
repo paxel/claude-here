@@ -7,6 +7,8 @@
 #   host's numeric unix uid.
 # - session::printable_session_id: a session id is a UTC timestamp and 4 hex
 #   digits.
+# - run::session_tmp_dir: the host directory of a session's /tmp, built from
+#   the numeric uid and the session id.
 #
 # src/session.rs tests that every function named here still exists.
 extensions:
@@ -16,3 +18,4 @@ extensions:
     data:
       - ["claude_here::image::base_tag", "ReturnValue", "log-injection", "manual"]
       - ["claude_here::session::printable_session_id", "ReturnValue", "log-injection", "manual"]
+      - ["claude_here::run::session_tmp_dir", "ReturnValue", "log-injection", "manual"]

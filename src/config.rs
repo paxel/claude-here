@@ -15,6 +15,17 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_USER: &str = "ni";
 /// Default network capture retention.
 pub const DEFAULT_NET_RETENTION_DAYS: u32 = 90;
+/// Default container memory limit; `none` removes it.
+pub const DEFAULT_MEMORY: &str = "8g";
+
+/// `None` in the config means the default limit, `none` means no limit.
+fn memory_limit(memory: Option<String>) -> Option<String> {
+    match memory.as_deref() {
+        None => Some(DEFAULT_MEMORY.to_string()),
+        Some("none") => None,
+        Some(_) => memory,
+    }
+}
 
 /// How much git is allowed to do inside the container.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -422,7 +433,7 @@ impl From<ConfigFile> for Config {
             net_retention_days: f.net_retention_days.unwrap_or(DEFAULT_NET_RETENTION_DAYS),
             update_check: f.update_check.unwrap_or(true),
             claude_version: f.claude_version.unwrap_or_else(|| "latest".to_string()),
-            memory: f.memory,
+            memory: memory_limit(f.memory),
             cpus: f.cpus,
             env: f.env,
             net_allow: f.net_allow,
@@ -547,6 +558,23 @@ mod tests {
         assert_eq!(c.mcp, Vec::<String>::new());
         assert_eq!(c.truststore_password, "changeit");
         assert_eq!(c.ca, None);
+        assert_eq!(c.memory.as_deref(), Some("8g"));
+    }
+
+    #[test]
+    fn memory_none_removes_the_limit_and_a_value_replaces_the_default() {
+        let none: Config = ConfigFile {
+            memory: Some("none".into()),
+            ..Default::default()
+        }
+        .into();
+        assert_eq!(none.memory, None);
+        let set: Config = ConfigFile {
+            memory: Some("12g".into()),
+            ..Default::default()
+        }
+        .into();
+        assert_eq!(set.memory.as_deref(), Some("12g"));
     }
 
     #[test]
