@@ -842,14 +842,15 @@ fn session_tmp_root(uid: u32) -> PathBuf {
 }
 
 /// The host directory mounted as the container's `/tmp`. On disk, not in
-/// RAM like a tmpfs, and outside the container's memory limit.
-fn session_tmp_dir(uid: u32, session_id: &str) -> PathBuf {
+/// RAM like a tmpfs, and outside the container's memory limit. Safe to
+/// print: the CodeQL model in `.github/codeql/extensions` says so.
+pub fn session_tmp_dir(uid: u32, session_id: &str) -> PathBuf {
     session_tmp_root(uid).join(session_id)
 }
 
 /// Create this session's `/tmp` directory, `0700` like its parent.
-pub fn prepare_session_tmp(uid: u32, session_id: &str) -> Result<PathBuf> {
-    create_session_tmp(&session_tmp_root(uid), uid, session_id)
+pub fn prepare_session_tmp(uid: u32, session_id: &str) -> Result<()> {
+    create_session_tmp(&session_tmp_root(uid), uid, session_id).map(|_| ())
 }
 
 /// The root lives in the shared host `/tmp`, so anybody could have created
@@ -1022,7 +1023,8 @@ pub fn execute(
     let probe = assemble(cfg, paths, &facts, &git, &req)?;
     // Before prepare_host_dirs, which would create a missing mount source
     // with the default mode.
-    let tmp_dir = prepare_session_tmp(facts.uid, &req.session_id)?;
+    prepare_session_tmp(facts.uid, &req.session_id)?;
+    let tmp_dir = session_tmp_dir(facts.uid, &req.session_id);
     req.mcp = prepare_host_dirs(
         paths,
         cfg,
