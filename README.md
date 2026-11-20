@@ -231,7 +231,7 @@ RUN npm install -g @anthropic-ai/mcp-inspector
 | `--ssh`, `--gh` | Forward ssh agent / hand the host's `gh auth token` to the container as `GH_TOKEN` (per-run 0600 env-file, never on the command line). `full` mode only |
 | `--docker-arg ARG` | Raw `docker run` argument. Repeatable |
 | `--ca PATH` | Company CA (PEM) trusted by every client in the container (see Configuration) |
-| `--memory 8g`, `--cpus 4` | Resource limits (none by default) |
+| `--memory 8g`, `--cpus 4` | Resource limits. Memory defaults to `8g`, `--memory none` removes it; no CPU limit by default |
 | `--net-log`, `--no-net-log` | Record / do not record this run's network traffic (off by default) |
 | `--rebuild`, `--no-build` | Force image rebuild / fail instead of building |
 | `--save`, `--save-global` | Persist the given flags into project / global config |

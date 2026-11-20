@@ -32,7 +32,7 @@ pub const CONFIG_TEMPLATE: &str = "\
 #                               # (CLAUDE_HERE_NO_UPDATE_CHECK=1 turns it off too)
 # claude_version = \"latest\"   # \"latest\" or \"stable\" follows that channel (checked daily,
 #                               # offered at start); \"2.1.274\" pins and stops the check
-# memory = \"8g\"
+# memory = \"8g\"               # the default; \"none\" removes the limit
 # cpus = 4
 # env = [\"EDITOR=nano\", \"MY_HOST_VAR\"]
 # docker_args = []
