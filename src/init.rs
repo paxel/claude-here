@@ -410,7 +410,7 @@ pub fn copy_tree(src: &Path, dest: &Path, rw: &PathRewriter) -> Result<()> {
 }
 
 /// `$XDG_CONFIG_HOME`, or `~/.config`.
-fn xdg_config_home(paths: &HostPaths) -> PathBuf {
+pub(crate) fn xdg_config_home(paths: &HostPaths) -> PathBuf {
     std::env::var_os("XDG_CONFIG_HOME").map_or_else(|| paths.home.join(".config"), PathBuf::from)
 }
 

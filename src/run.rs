@@ -37,6 +37,8 @@ pub struct HostFacts {
     pub gid: u32,
     pub tty: bool,
     pub gitconfig: Option<PathBuf>,
+    /// The host's global git ignore file (`$XDG_CONFIG_HOME/git/ignore`).
+    pub gitignore: Option<PathBuf>,
     pub ssh_auth_sock: Option<PathBuf>,
     pub known_hosts: Option<PathBuf>,
     /// Token from `gh auth token` on the host (keyring-backed logins keep it
@@ -73,6 +75,11 @@ impl HostFacts {
             gid,
             tty: std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
             gitconfig: exists(paths.home.join(".gitconfig")),
+            gitignore: exists(
+                crate::init::xdg_config_home(paths)
+                    .join("git")
+                    .join("ignore"),
+            ),
             ssh_auth_sock,
             known_hosts: exists(paths.home.join(".ssh").join("known_hosts")),
             gh_token: (cfg.gh && cfg.git_mode == GitMode::Full)
@@ -252,6 +259,9 @@ pub fn assemble(
     mounts.push(Mount::rw(paths.container_home(), chome.join(".claude")));
     if let Some(gc) = &facts.gitconfig {
         mounts.push(Mount::ro(gc, chome.join(".gitconfig")));
+    }
+    if let Some(gi) = &facts.gitignore {
+        mount_git_ignore(gi, &chome, &mut mounts, &mut env);
     }
 
     let net_capture = cfg.net_capture && !uses_host_network(&cfg.docker_args);
@@ -850,6 +860,29 @@ fn stage_net_summaries(paths: &HostPaths, session_id: &str, project: &Path) -> R
 
 /// Make sure the container `.claude.json` says onboarding is done, otherwise
 /// interactive sessions start with the theme/login wizard despite the token.
+/// Hand the host's global git ignore to the container's git.
+///
+/// Not mounted at `~/.config/git/ignore`: docker would create `~/.config`
+/// owned by root. Git is pointed at the file through its environment.
+fn mount_git_ignore(
+    host: &Path,
+    chome: &Path,
+    mounts: &mut Vec<Mount>,
+    env: &mut Vec<(String, String)>,
+) {
+    let target = chome.join(".claude_here").join("gitignore");
+    env.push(("GIT_CONFIG_COUNT".to_string(), "1".to_string()));
+    env.push((
+        "GIT_CONFIG_KEY_0".to_string(),
+        "core.excludesFile".to_string(),
+    ));
+    env.push((
+        "GIT_CONFIG_VALUE_0".to_string(),
+        target.to_string_lossy().into_owned(),
+    ));
+    mounts.push(Mount::ro(host, target));
+}
+
 fn ensure_onboarded(path: &Path) -> Result<()> {
     let mut obj = crate::init::read_json_object(path);
     if obj.get("hasCompletedOnboarding") == Some(&serde_json::Value::Bool(true)) {
@@ -1051,6 +1084,7 @@ mod tests {
             gid: 1000,
             tty: true,
             gitconfig: Some("/home/axel/.gitconfig".into()),
+            gitignore: Some("/home/axel/.config/git/ignore".into()),
             ssh_auth_sock: Some("/run/user/1000/ssh".into()),
             known_hosts: Some("/home/axel/.ssh/known_hosts".into()),
             gh_token: Some("gho_test".into()),
@@ -1092,6 +1126,27 @@ mod tests {
             toolchains: toolchain::resolve(&owned).unwrap_or_default(),
             ..req()
         }
+    }
+
+    #[test]
+    fn global_git_ignore_is_mounted_and_git_is_pointed_at_it() -> Result<()> {
+        let c = cfg(ConfigFile::default());
+        let a = assemble(&c, &paths(), &facts(), &git(), &req())?;
+        let s = a.spec.to_args().join(" ");
+        assert!(s.contains("-v /home/axel/.config/git/ignore:/home/ni/.claude_here/gitignore:ro"));
+        assert!(s.contains("-e GIT_CONFIG_COUNT=1"));
+        assert!(s.contains("-e GIT_CONFIG_KEY_0=core.excludesFile"));
+        assert!(s.contains("-e GIT_CONFIG_VALUE_0=/home/ni/.claude_here/gitignore"));
+
+        let none = HostFacts {
+            gitignore: None,
+            ..facts()
+        };
+        let a = assemble(&c, &paths(), &none, &git(), &req())?;
+        let s = a.spec.to_args().join(" ");
+        assert!(!s.contains("gitignore"));
+        assert!(!s.contains("GIT_CONFIG_"));
+        Ok(())
     }
 
     #[test]
@@ -1272,6 +1327,7 @@ mod tests {
         let hf = HostFacts {
             cwd: project.clone(),
             gitconfig: None,
+            gitignore: None,
             ssh_auth_sock: None,
             known_hosts: None,
             gh_token: None,
