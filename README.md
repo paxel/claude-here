@@ -53,7 +53,9 @@ claude_yolo                      # --dangerously-skip-permissions, still sandbox
   entrypoint needs are dropped, `no-new-privileges` is set.
 * **Ephemeral containers, persistent state where it matters.** Each run is a
   fresh `--rm` container. Claude's own state (`~/.claude`: sessions, memory,
-  plugins) lives in `~/.config/claude_here/home/` and persists.
+  plugins) lives in `~/.config/claude_here/home/` and persists. The
+  container's `/tmp` is `/tmp/claude_here-<uid>/<session>` on the host (on
+  disk, not in RAM; `0700`), deleted when the session ends.
 
 ## Install
 

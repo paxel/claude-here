@@ -449,6 +449,10 @@ fn add_bundled_mounts(
     mounts: &mut Vec<Mount>,
     env: &mut Vec<(String, String)>,
 ) {
+    mounts.push(Mount::rw(
+        session_tmp_dir(facts.uid, &req.session_id),
+        "/tmp",
+    ));
     let plugin = chome.join(crate::plugin::CONTAINER_DIR);
     mounts.push(Mount::ro(paths.plugin_dir(), &plugin));
     env.push(("CH_PLUGIN_DIR".to_string(), plugin.display().to_string()));
@@ -832,6 +836,87 @@ pub fn prepare_host_dirs(
     Ok(granted)
 }
 
+/// The host directory holding every session's `/tmp` of this user.
+fn session_tmp_root(uid: u32) -> PathBuf {
+    PathBuf::from(format!("/tmp/claude_here-{uid}"))
+}
+
+/// The host directory mounted as the container's `/tmp`. On disk, not in
+/// RAM like a tmpfs, and outside the container's memory limit.
+fn session_tmp_dir(uid: u32, session_id: &str) -> PathBuf {
+    session_tmp_root(uid).join(session_id)
+}
+
+/// Create this session's `/tmp` directory, `0700` like its parent.
+pub fn prepare_session_tmp(uid: u32, session_id: &str) -> Result<PathBuf> {
+    create_session_tmp(&session_tmp_root(uid), uid, session_id)
+}
+
+/// The root lives in the shared host `/tmp`, so anybody could have created
+/// it first: it must be a real directory, ours and private, or nothing is
+/// written into it.
+fn create_session_tmp(root: &Path, uid: u32, session_id: &str) -> Result<PathBuf> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    match fs::DirBuilder::new().mode(0o700).create(root) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e).with_context(|| format!("creating {}", root.display())),
+    }
+    let meta =
+        fs::symlink_metadata(root).with_context(|| format!("checking {}", root.display()))?;
+    if !meta.file_type().is_dir() || meta.uid() != uid || meta.mode() & 0o777 != 0o700 {
+        bail!(
+            "{} is not a directory owned by uid {uid} with mode 0700; remove it and start again",
+            root.display()
+        );
+    }
+    let dir = root.join(session_id);
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&dir)
+        .with_context(|| format!("creating {}", dir.display()))?;
+    Ok(dir)
+}
+
+/// Delete this session's `/tmp` directory, as far as the host user can: a
+/// file made by container root stays, and one warning names the directory.
+pub fn remove_session_tmp(dir: &Path) {
+    if remove_what_we_can(dir) {
+        return;
+    }
+    eprintln!(
+        "claude_here: note: could not remove everything in {}",
+        dir.display()
+    );
+}
+
+/// Remove `path` and everything below it, carrying on past failures.
+/// Directories are made writable first, so a read-only one written by a
+/// tool does not keep its files. Returns whether everything is gone.
+fn remove_what_we_can(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return !path.exists();
+    };
+    if !meta.file_type().is_dir() {
+        return fs::remove_file(path).is_ok();
+    }
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+    let mut all = true;
+    match fs::read_dir(path) {
+        Ok(entries) => {
+            for entry in entries {
+                match entry {
+                    Ok(e) => all &= remove_what_we_can(&e.path()),
+                    Err(_) => all = false,
+                }
+            }
+        }
+        Err(_) => all = false,
+    }
+    fs::remove_dir(path).is_ok() && all
+}
+
 /// Assemble the read-only view of earlier network activity: the `.summary.json`
 /// files of *this* project and nothing else. The pcap files never travel — they
 /// are captured with `-s 512` and therefore contain request headers, including
@@ -935,6 +1020,9 @@ pub fn execute(
     // Assemble once for the mount list, grant the MCP servers, then assemble
     // again so the session info reports what was actually granted.
     let probe = assemble(cfg, paths, &facts, &git, &req)?;
+    // Before prepare_host_dirs, which would create a missing mount source
+    // with the default mode.
+    let tmp_dir = prepare_session_tmp(facts.uid, &req.session_id)?;
     req.mcp = prepare_host_dirs(
         paths,
         cfg,
@@ -981,6 +1069,7 @@ pub fn execute(
     let code = docker.run_inherit(&assembled.spec.to_args());
     let _ = fs::remove_file(&gh_file);
     let _ = fs::remove_dir_all(paths.net_view_dir(&req.session_id));
+    remove_session_tmp(&tmp_dir);
     let code = code?;
     // After the session: the wait is never in front of the work.
     crate::update::refresh_if_stale(paths, cfg.update_check);
@@ -1126,6 +1215,85 @@ mod tests {
             toolchains: toolchain::resolve(&owned).unwrap_or_default(),
             ..req()
         }
+    }
+
+    #[test]
+    fn tmp_is_the_session_dir_under_the_host_tmp_not_a_tmpfs() -> Result<()> {
+        let c = cfg(ConfigFile::default());
+        let a = assemble(&c, &paths(), &facts(), &git(), &req())?;
+        let s = a.spec.to_args().join(" ");
+        assert!(s.contains("-v /tmp/claude_here-1000/20260919-120000-abcd:/tmp "));
+        assert!(!s.contains("--tmpfs"));
+        Ok(())
+    }
+
+    fn uid_of(p: &Path) -> Result<u32> {
+        use std::os::unix::fs::MetadataExt;
+        Ok(fs::metadata(p)?.uid())
+    }
+
+    fn mode_of(p: &Path) -> Result<u32> {
+        use std::os::unix::fs::MetadataExt;
+        Ok(fs::symlink_metadata(p)?.mode() & 0o777)
+    }
+
+    #[test]
+    fn session_tmp_is_created_private() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let uid = uid_of(tmp.path())?;
+        let root = tmp.path().join("claude_here-x");
+        let dir = create_session_tmp(&root, uid, "s1")?;
+        assert_eq!(dir, root.join("s1"));
+        assert_eq!(mode_of(&root)?, 0o700);
+        assert_eq!(mode_of(&dir)?, 0o700);
+        // A second session reuses the root.
+        create_session_tmp(&root, uid, "s2")?;
+        assert!(root.join("s2").is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn session_tmp_refuses_a_root_that_is_not_ours_and_private() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir()?;
+        let uid = uid_of(tmp.path())?;
+
+        let open = tmp.path().join("open");
+        fs::create_dir(&open)?;
+        fs::set_permissions(&open, fs::Permissions::from_mode(0o755))?;
+        assert!(create_session_tmp(&open, uid, "s").is_err());
+        assert!(!open.join("s").exists());
+
+        let target = tmp.path().join("target");
+        fs::create_dir(&target)?;
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o700))?;
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&target, &link)?;
+        assert!(create_session_tmp(&link, uid, "s").is_err());
+        assert!(!target.join("s").exists());
+
+        let theirs = tmp.path().join("theirs");
+        assert!(create_session_tmp(&theirs, uid.wrapping_add(1), "s").is_err());
+        assert!(!theirs.join("s").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn removing_session_tmp_gets_past_read_only_dirs() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir()?;
+        let dir = tmp.path().join("s");
+        let locked = dir.join("a").join("locked");
+        fs::create_dir_all(&locked)?;
+        fs::write(locked.join("f"), "x")?;
+        fs::write(dir.join("g"), "y")?;
+        std::os::unix::fs::symlink(tmp.path(), dir.join("up"))?;
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o500))?;
+        assert!(remove_what_we_can(&dir));
+        assert!(!dir.exists());
+        assert!(tmp.path().exists(), "a symlink is removed, not followed");
+        remove_session_tmp(&tmp.path().join("gone"));
+        Ok(())
     }
 
     #[test]

@@ -127,7 +127,6 @@ impl RunSpec {
             a.extend(["--security-opt".into(), format!("seccomp={}", p.display())]);
         }
         a.extend(["--pids-limit".into(), PIDS_LIMIT.to_string()]);
-        a.extend(["--tmpfs".into(), "/tmp:exec".into()]);
         if let Some(m) = &self.memory {
             // Swap equal to the limit means no swap on top of it.
             a.extend(["--memory".into(), m.clone()]);
