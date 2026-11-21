@@ -15,7 +15,7 @@ ARG MAVEN_VERSION=3.9.16
 ARG GRADLE_VERSION=8.14
 ARG KOTLIN_VERSION=2.4.20
 # ARG, not ENV: build scaffolding has no business in the runtime environment.
-ARG CH_CURL="curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20"
+ARG CH_CURL="curl -fsSL --proto =https --tlsv1.2 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20"
 
 RUN arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) ga=x64 ;; arm64) ga=aarch64 ;; *) echo "unsupported arch $arch"; exit 1 ;; esac; \

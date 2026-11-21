@@ -17,7 +17,7 @@ RUN mkdir -p "${ANDROID_HOME}" && chown "${CH_USER}" "${ANDROID_HOME}"
 USER ${CH_USER}
 
 RUN mkdir -p "${ANDROID_HOME}/cmdline-tools" \
- && curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 -o /tmp/tools.zip \
+ && curl -fsSL --proto =https --tlsv1.2 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 -o /tmp/tools.zip \
       "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip" \
  && unzip -q /tmp/tools.zip -d "${ANDROID_HOME}/cmdline-tools" \
  && mv "${ANDROID_HOME}/cmdline-tools/cmdline-tools" "${ANDROID_HOME}/cmdline-tools/latest" \

@@ -15,8 +15,8 @@ RUN set -eu \
       *) echo "rust: unsupported architecture $(uname -m)" >&2; exit 1 ;; \
     esac \
  && url="https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${t}/rustup-init" \
- && curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 -o /tmp/rustup-init "${url}" \
- && sum="$(curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 "${url}.sha256" | cut -d' ' -f1)" \
+ && curl -fsSL --proto =https --tlsv1.2 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 -o /tmp/rustup-init "${url}" \
+ && sum="$(curl -fsSL --proto =https --tlsv1.2 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 "${url}.sha256" | cut -d' ' -f1)" \
  && echo "${sum}  /tmp/rustup-init" | sha256sum -c - \
  && chmod +x /tmp/rustup-init \
  && /tmp/rustup-init -y --profile minimal --component clippy,rustfmt,rust-analyzer \

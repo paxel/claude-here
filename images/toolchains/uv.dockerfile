@@ -11,8 +11,8 @@ RUN set -eu \
       *) echo "uv: unsupported architecture $(uname -m)" >&2; exit 1 ;; \
     esac \
  && url="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${t}.tar.gz" \
- && curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 -o /tmp/uv.tar.gz "${url}" \
- && sum="$(curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 "${url}.sha256" | cut -d' ' -f1)" \
+ && curl -fsSL --proto =https --tlsv1.2 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 -o /tmp/uv.tar.gz "${url}" \
+ && sum="$(curl -fsSL --proto =https --tlsv1.2 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 "${url}.sha256" | cut -d' ' -f1)" \
  && echo "${sum}  /tmp/uv.tar.gz" | sha256sum -c - \
  && tar -xzf /tmp/uv.tar.gz -C /tmp \
  && install -m 0755 "/tmp/uv-${t}/uv" "/tmp/uv-${t}/uvx" /usr/local/bin/ \

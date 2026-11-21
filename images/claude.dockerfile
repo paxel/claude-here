@@ -15,7 +15,7 @@ ARG CLAUDE_VERSION=latest
 USER ${CH_USER}
 RUN set -eu \
  && base=https://downloads.claude.ai/claude-code-releases \
- && get() { curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 "$@"; } \
+ && get() { curl -fsSL --proto =https --tlsv1.2 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 "$@"; } \
  && case "$(uname -m)" in \
       x86_64) platform=linux-x64 ;; \
       aarch64) platform=linux-arm64 ;; \
