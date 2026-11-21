@@ -8,3 +8,10 @@ license.override = ["BSD-3-Clause"]
 effectiveUntil = 2027-05-21
 reason = """deps.dev reports colorama's licence as non-standard; its LICENSE.txt is the \
 3-clause BSD licence."""
+
+[[PackageOverrides]]
+name = "jinja2"
+ecosystem = "PyPI"
+license.override = ["BSD-3-Clause"]
+effectiveUntil = 2027-05-21
+reason = """deps.dev reports jinja2's licence as non-standard; its LICENSE.txt is the 3-clause BSD licence."""

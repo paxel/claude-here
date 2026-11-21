@@ -8,3 +8,10 @@ license.override = ["BSD-3-Clause"]
 effectiveUntil = 2027-05-21
 reason = """deps.dev reports colorama's licence as non-standard; its LICENSE.txt is the \
 3-clause BSD licence."""
+
+[[PackageOverrides]]
+name = "trove-classifiers"
+ecosystem = "PyPI"
+license.override = ["Apache-2.0"]
+effectiveUntil = 2027-05-21
+reason = """deps.dev reports trove-classifiers' licence as non-standard; PyPI classifies it as Apache Software License."""
