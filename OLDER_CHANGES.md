@@ -1,6 +1,18 @@
 # Older changes
 
-## 0.5.0 (2026-11-14)
+## [0.6.0] - 2026-11-20
+
+* Network recording is off by default; `net_capture = true` or the new `--net-log` turns it on ([here-1018](https://github.com/paxel/claude-here/issues/27)).
+* Ending a recorded session no longer waits for the network summary: `net last`, `show`, `top` and `grep` build it from the capture the first time they need it. `images/` changed, so every image is rebuilt once on first start ([here-1019](https://github.com/paxel/claude-here/issues/28)).
+* `net last` and `net show` print one row per host, the busiest 20, and count the plain HTTP requests; `--all` shows every host and lists the requests ([here-1020](https://github.com/paxel/claude-here/issues/29)).
+* `--resume`, `-r`, `--continue` and `-c` in a project without an earlier conversation start a fresh session with a note instead of finding nothing to resume ([here-1021](https://github.com/paxel/claude-here/issues/30)).
+* Toolchain images install only locked, hash-checked packages: pip and npm tools come from lockfiles, and uv, rustup, Claude Code and NodeSource's key are checked by sha256 instead of piping an install script into a shell. `images/` changed, so every image is rebuilt once on first start ([here-1023](https://github.com/paxel/claude-here/issues/32)).
+* The container's `/tmp` is a private directory under the host's `/tmp` (`/tmp/claude_here-<uid>/<session>`), deleted when the session ends, instead of a tmpfs that filled RAM ([here-1025](https://github.com/paxel/claude-here/issues/39)).
+* Containers are limited to 8g of memory by default; `--memory none` or `memory = "none"` removes the limit ([here-1026](https://github.com/paxel/claude-here/issues/40)).
+* A memory limit no longer allows the same amount of swap on top; the container stops at the limit ([here-1027](https://github.com/paxel/claude-here/issues/41)).
+* Internal: unit tests drive docker, git and the terminal paths through a fake `docker`, temp directories and seams, aiming at 80% line coverage ([here-1022](https://github.com/paxel/claude-here/issues/31)).
+
+## [0.5.0] - 2026-11-14
 
 * Release archives and `install.sh` carry signed SLSA build provenance; `gh attestation verify <file> --repo paxel/claude-here` checks a download ([here-1014](https://github.com/paxel/claude-here/issues/22)).
 * The base image starts from a fixed Debian `trixie-slim` digest and upgrades its packages while building, so `update --base` still brings Debian's security fixes. `images/` changed, so every image is rebuilt once on first start ([here-1013](https://github.com/paxel/claude-here/issues/21)).
@@ -11,29 +23,29 @@
 * Internal: Dependabot for cargo, GitHub Actions and the base image ([here-1006](https://github.com/paxel/claude-here/issues/12)); actions pinned to commit SHAs with read-only tokens ([here-1007](https://github.com/paxel/claude-here/issues/13)).
 * Internal: a security policy with private vulnerability reporting ([here-1008](https://github.com/paxel/claude-here/issues/14)), status badges ([here-1009](https://github.com/paxel/claude-here/issues/15)) and a protected main branch ([here-1010](https://github.com/paxel/claude-here/issues/16)).
 
-## 0.4.2 (2026-11-14)
+## [0.4.2] - 2026-11-14
 
 * `--python` builds again; the layer's check for the pyright language server failed with current pyright releases. `images/` changed, so the python layer is rebuilt once on first start.
 * With `--cloud ro`, read-only calls are no longer denied because of a flag value: `kubectl --context ctx -n ns get ns`, `kubectl config view -o yaml`, `helm -n ns list` and `aws ec2 describe-instances --output json` now go through. `images/` changed, so every image is rebuilt once on first start.
 * With `--docker`, testcontainers reaches the containers it starts without any configuration: `TESTCONTAINERS_HOST_OVERRIDE=localhost` is exported next to `TESTCONTAINERS_RYUK_DISABLED=true`.
 
-## 0.4.1 (2026-10-28)
+## [0.4.1] - 2026-10-28
 
 * Image builds trust the company CA from `[tls] ca`: the first build, `--rebuild` and `update` now work behind a TLS-intercepting proxy. The CA is part of the base image, so changing it rebuilds the chain. `images/` changed, so every image is rebuilt once on first start.
 * A CA file with several certificates is imported into the JVM's `cacerts` completely; before, only the first certificate was.
 
-## 0.4.0 (2026-10-17)
+## [0.4.0] - 2026-10-17
 
 * Every release now publishes the Homebrew formula to `paxel/homebrew-tap`, so `brew tap paxel/tap && brew install claude-here` works on macOS, Linux and inside WSL and `brew upgrade` follows new releases.
 
-## 0.3.0 (2026-10-17)
+## [0.3.0] - 2026-10-17
 
 * `--docker` (alias `--podman`) toolchain: rootless podman inside the sandbox with the `docker` CLI shim and a Docker API socket started by the entrypoint, so testcontainers (`DOCKER_HOST` set, Ryuk disabled as testcontainers documents for rootless podman), `docker build` and `docker run` work without any host daemon being reachable. Nested containers run as the sandbox user in a user namespace and share the sandbox's allowlist, capture and limits. While the toolchain is on, `no-new-privileges` is dropped (the layer strips every setuid bit in the image, fails its build if one is left, and gives `newuidmap`/`newgidmap` file capabilities instead) Docker's default seccomp profile is replaced by the same profile plus the namespace and mount syscalls podman needs, and neither Docker's default AppArmor profile (it denies `mount`) nor its `/proc` masks (a nested container cannot mount its own `/proc` behind them) are applied; the system prompt says so. `/dev/net/tun` is passed through for the nested containers' network (pasta). Image storage is a named volume per project (`claude_here-containers-<sha8>`): new `claude_here volumes [--rm] [--all]`, and `uninstall` removes them. Needs kernel 5.11+. Under the allowlist, Docker Hub, `ghcr.io` and `quay.io` are allowed (ADR 0010).
 * A chain of nearly every toolchain now gets a hashed tag instead of exceeding docker's 128-character limit; shorter chains keep their readable tags.
 * `[tls] ca = "<pem>"` / `--ca <pem>`: a company CA trusted by every client in the container. The PEM goes into the system bundle at session start and the clients with their own root store are pointed at it: Node and Claude Code (`NODE_EXTRA_CA_CERTS`), `pip`/`requests`/`az` (`REQUESTS_CA_BUNDLE`, `PIP_CERT`), `uv` (`UV_NATIVE_TLS`), `aws` (`AWS_CA_BUNDLE`), `gcloud` (`CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE`), the JDK (`keytool` import into `cacerts`). `[tls] truststore` stays for a pre-built JKS and wins for the JVM when both are set (ADR 0009). `images/entrypoint.sh` changed, so every image is rebuilt once on first start.
 * Weekly dependency vulnerability check (`cargo audit` against the RustSec advisory database) as a GitHub Actions workflow, also runnable on demand. It fails only on a known vulnerability; unmaintained or yanked crates are reported but do not fail it.
 
-## 0.2.0 (2026-09-25)
+## [0.2.0] - 2026-09-25
 
 * Claude Code moved out of the base image into its own last layer (`images/claude.dockerfile`), above the toolchains and the user and project layers. A new Claude release rebuilds that one layer, in seconds, instead of the whole chain. Image files changed, so every image is rebuilt once on first start, and the image a session runs gains a `-claude` suffix. The existing tags stay in use as intermediate layers; `docker image prune` reclaims the space of the replaced content afterwards.
 * Claude Code release detection: the newest version of the configured channel is read from `downloads.claude.ai` at most once a day after a session and cached in `~/.config/claude_here/claude-version.json`. A newer version is offered at the next interactive start (`[y/N]`, asked again until accepted; one hint line without a terminal). An accepted version is picked up by every image on its next start without another question; new images get the accepted version. `claude_version = "stable"` follows the stable channel, a version number pins it and switches the check off; `update_check = false` switches off both checks.
@@ -41,7 +53,7 @@
 * Fixed: after `update`, images of other toolchain combinations (for example a `--node` run) kept the old Claude Code because the rebuilt base kept its hash. A layer's hash now includes the image id of its parent, so a rebuilt base or toolchain makes every image above it rebuild on its next start. Under `--no-build` such an image now fails instead of running on the old base.
 * `--save` no longer lists a toolchain twice when it is already in the config.
 
-## 0.1.0 (2026-09-19)
+## [0.1.0] - 2026-09-19
 
 Initial release.
 

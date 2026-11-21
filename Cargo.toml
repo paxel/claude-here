@@ -1,6 +1,6 @@
 [package]
 name = "claude-here"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 description = "Run Claude Code inside a project-scoped Docker sandbox with enforced git modes and network capture"
 license = "MIT"
@@ -36,13 +36,32 @@ toml = "1.1.6"
 [dev-dependencies]
 tempfile = "3.27.0"
 
+# The lint set of the standard (paxel/gates, configs/rust/lints.toml), plus pedantic.
+[lints.rust]
+# Forbidden rather than denied: the crate has no `unsafe` at all.
+unsafe_code = "forbid"
+
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
-unwrap_used = "deny"
-expect_used = "deny"
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 must_use_candidate = "allow"
 doc_markdown = "allow"
 struct_excessive_bools = "allow"
 missing_panics_doc = "allow"
+# Shipped code may not panic: no unwrap, expect or panic, no unreachable, no indexing or
+# slicing that can go out of bounds, no arithmetic that can overflow. CI runs clippy on the
+# tests with these seven allowed (paxel/gates, actions/rust): they are how a test fails.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+arithmetic_side_effects = "deny"
+todo = "deny"
+unimplemented = "deny"
+# No `dbg!`, and no `#[allow]`: a lint that must be silenced says so with an
+# `#[expect(..., reason = "...")]`, which fails once the lint no longer fires.
+dbg_macro = "deny"
+allow_attributes = "deny"

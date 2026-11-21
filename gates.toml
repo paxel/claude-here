@@ -1,0 +1,12 @@
+# What the gates audit (paxel/gates) needs to know about this repository and cannot see.
+
+# npm lockfiles of the tools the toolchain images install (pnpm, typescript, pyright, …),
+# pinned so that `npm ci` installs them with their hashes. They hold no code of claude-here,
+# so they are no TypeScript stack; the OSV gate still scans them.
+[[NotStacks]]
+path = "images/toolchains/node"
+reason = "npm pins of the node toolchain image's global tools; no code"
+
+[[NotStacks]]
+path = "images/toolchains/python"
+reason = "npm pins of pyright for the python toolchain image; no code"

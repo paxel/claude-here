@@ -1,15 +1,16 @@
 # claude_here
 
-[![CI](https://github.com/paxel/claude-here/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/paxel/claude-here/actions/workflows/ci.yml)
-[![Quality](https://github.com/paxel/claude-here/actions/workflows/quality.yml/badge.svg?branch=main)](https://github.com/paxel/claude-here/actions/workflows/quality.yml)
-[![Security](https://github.com/paxel/claude-here/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/paxel/claude-here/actions/workflows/security.yml)
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=paxel_claude-here&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=paxel_claude-here)
+[![CI](https://github.com/paxel/claude-here/actions/workflows/ci.yml/badge.svg?branch=summer)](https://github.com/paxel/claude-here/actions/workflows/ci.yml)
+[![Security](https://github.com/paxel/claude-here/actions/workflows/security.yml/badge.svg?branch=summer)](https://github.com/paxel/claude-here/actions/workflows/security.yml)
+[![CodeQL](https://github.com/paxel/claude-here/actions/workflows/codeql.yml/badge.svg?branch=summer)](https://github.com/paxel/claude-here/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/paxel/claude-here/badge)](https://scorecard.dev/viewer/?uri=github.com/paxel/claude-here)
-[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A580.46%25-green)](https://github.com/paxel/claude-here/blob/main/.github/workflows/quality.yml)
-[![Release](https://img.shields.io/github/v/release/paxel/claude-here)](https://github.com/paxel/claude-here/releases/latest)
-[![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-success)](https://github.com/paxel/claude-here/blob/main/src/lib.rs)
-[![panic-free](https://img.shields.io/badge/panic--free-linted-success)](https://github.com/paxel/claude-here/blob/main/src/lib.rs)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=paxel_claude-here&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=paxel_claude-here)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpaxel%2Fclaude-here%2Fsummer%2F.github%2Fbadges%2Fcoverage-rust.json)](coverage-floors.toml)
+[![Fuzz](https://github.com/paxel/claude-here/actions/workflows/fuzz.yml/badge.svg?branch=summer)](https://github.com/paxel/claude-here/actions/workflows/fuzz.yml)
+[![Release](https://img.shields.io/github/v/release/paxel/claude-here)](https://github.com/paxel/claude-here/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![panic-free](https://img.shields.io/badge/panic--free-linted-success)](Cargo.toml)
+[![unsafe](https://img.shields.io/badge/unsafe-forbidden-success)](Cargo.toml)
 
 Run [Claude Code](https://docs.anthropic.com/en/docs/claude-code) inside a
 project-scoped Docker sandbox — with git modes that are actually enforced, an
@@ -93,8 +94,11 @@ installs fish completions and offers to add `.claude_here/` to your global git
 ignore. The first `claude_here` builds the `base` image locally (a few minutes).
 
 Every release archive and `install.sh` carry signed build provenance. Check a
-download with `gh attestation verify <file> --repo paxel/claude-here`; the
-bundle is also attached to the release as `claude_here-<version>.intoto.jsonl`.
+download with `gh attestation verify <file> --repo paxel/claude-here
+--signer-workflow paxel/gates/.github/workflows/provenance.yml --source-ref
+refs/tags/<version>`; the Sigstore bundle is also attached to the release as
+`claude_here-<version>-provenance.sigstore.json`, next to a CycloneDX SBOM of the
+source, `claude_here-<version>-source.cdx.json`.
 
 ### WSL
 

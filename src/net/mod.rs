@@ -99,7 +99,10 @@ pub fn human_bytes(b: u64) -> String {
     if b < 1024 {
         return format!("{b} B");
     }
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a display value; a byte count above 2^52 may round"
+    )]
     let mut v = b as f64 / 1024.0;
     let mut unit = "KB";
     for larger in ["MB", "GB", "TB"] {

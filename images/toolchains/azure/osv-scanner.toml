@@ -1,0 +1,103 @@
+# osv-scanner's exceptions for the pinned tools in this directory: osv-scanner reads the file
+# beside the lockfile. A reason and a date each; the gate fails again when the date passes.
+
+[[PackageOverrides]]
+name = "colorama"
+ecosystem = "PyPI"
+license.override = ["BSD-3-Clause"]
+effectiveUntil = 2027-05-21
+reason = """deps.dev reports colorama's licence as non-standard; its LICENSE.txt is the \
+3-clause BSD licence."""
+
+[[PackageOverrides]]
+name = "argcomplete"
+ecosystem = "PyPI"
+license.override = ["Apache-2.0"]
+effectiveUntil = 2027-05-21
+reason = """deps.dev reports argcomplete's licence as non-standard; PyPI classifies it as Apache Software License."""
+
+[[PackageOverrides]]
+name = "python-dateutil"
+ecosystem = "PyPI"
+license.override = ["Apache-2.0", "BSD-3-Clause"]
+effectiveUntil = 2027-05-21
+reason = """deps.dev reports python-dateutil's dual licence as non-standard; it is Apache-2.0 and BSD-3-Clause."""
+
+[[PackageOverrides]]
+name = "pywin32"
+ecosystem = "PyPI"
+license.override = ["PSF-2.0"]
+effectiveUntil = 2027-05-21
+reason = """deps.dev reports no licence for pywin32; PyPI classifies it as Python Software Foundation License. Its pin carries sys_platform == 'win32', so pip never installs it into the Linux image."""
+
+[[PackageOverrides]]
+name = "antlr4-python3-runtime"
+ecosystem = "PyPI"
+license.ignore = true
+effectiveUntil = 2027-05-21
+reason = """deps.dev reports antlr4-python3-runtime's licence as non-standard; PyPI names BSD without the variant. \
+pip installs it from PyPI into the toolchain image on the user's machine; claude-here ships only the pin."""
+
+[[PackageOverrides]]
+name = "fabric"
+ecosystem = "PyPI"
+license.ignore = true
+effectiveUntil = 2027-05-21
+reason = """deps.dev reports fabric's licence as non-standard; PyPI names BSD without the variant. \
+pip installs it from PyPI into the toolchain image on the user's machine; claude-here ships only the pin."""
+
+[[PackageOverrides]]
+name = "pyreadline3"
+ecosystem = "PyPI"
+license.ignore = true
+effectiveUntil = 2027-05-21
+reason = """deps.dev reports pyreadline3's licence as non-standard; PyPI names BSD without the variant. \
+Its pin carries sys_platform == 'win32', so pip never installs it into the Linux image."""
+
+[[PackageOverrides]]
+name = "pysocks"
+ecosystem = "PyPI"
+license.ignore = true
+effectiveUntil = 2027-05-21
+reason = """deps.dev reports pysocks's licence as non-standard; PyPI names BSD without the variant. \
+pip installs it from PyPI into the toolchain image on the user's machine; claude-here ships only the pin."""
+
+[[PackageOverrides]]
+name = "pkginfo"
+ecosystem = "PyPI"
+license.ignore = true
+effectiveUntil = 2027-05-21
+reason = """deps.dev and PyPI name no licence for pkginfo; azure-cli requires it. \
+pip installs it from PyPI into the toolchain image on the user's machine; claude-here ships only the pin."""
+
+[[PackageOverrides]]
+name = "chardet"
+ecosystem = "PyPI"
+license.ignore = true
+effectiveUntil = 2027-05-21
+reason = """LGPL-2.1-or-later, which the allowlist does not hold; azure-cli requires it. \
+pip installs it from PyPI into the toolchain image on the user's machine; claude-here ships only the pin."""
+
+[[PackageOverrides]]
+name = "paramiko"
+ecosystem = "PyPI"
+license.ignore = true
+effectiveUntil = 2027-05-21
+reason = """LGPL-2.1, which the allowlist does not hold; azure-cli requires it. \
+pip installs it from PyPI into the toolchain image on the user's machine; claude-here ships only the pin."""
+
+[[PackageOverrides]]
+name = "scp"
+ecosystem = "PyPI"
+license.ignore = true
+effectiveUntil = 2027-05-21
+reason = """LGPL-2.1-or-later, which the allowlist does not hold; azure-cli requires it. \
+pip installs it from PyPI into the toolchain image on the user's machine; claude-here ships only the pin."""
+
+[[PackageOverrides]]
+name = "pygithub"
+ecosystem = "PyPI"
+license.ignore = true
+effectiveUntil = 2027-05-21
+reason = """LGPL-3.0 (deps.dev also lists GPL-3.0), which the allowlist does not hold; azure-cli requires it. \
+pip installs it from PyPI into the toolchain image on the user's machine; claude-here ships only the pin."""

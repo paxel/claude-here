@@ -351,7 +351,10 @@ fn container_name(cwd: &Path, session_id: &str) -> String {
 }
 
 /// The blob handed to Claude: what was granted and where things are.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "every argument is a separate part of the session info"
+)]
 fn session_info(
     cfg: &Config,
     facts: &HostFacts,

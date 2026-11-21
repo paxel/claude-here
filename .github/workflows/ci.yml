@@ -1,45 +1,54 @@
-name: ci
+name: CI
+
+# claude-here's gates. The standard's part comes from paxel/gates: the OSV gate, the Rust gate
+# (format, lint set, clippy, tests, coverage ratchet) and SonarQube Cloud. The Docker
+# integration job is claude-here's own (docs/adr/0011-move-to-gates.md).
+# A branch gets its run through its pull request; a run per push as well would be the same
+# jobs twice, and SonarQube Cloud analyses only the default branch and pull requests.
 on:
   push:
-    branches: [main]
+    branches: [summer]
   pull_request:
-# The token only reads the code: no job writes to the repository.
+
+concurrency:
+  group: ci-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Keep in sync with rust-toolchain.toml; toolchain bumps are deliberate, separate PRs.
-      - uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0 branch
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo test
-  # The same audit as the weekly security.yml, on every pull request and push
-  # to main, so a vulnerable crate cannot come in unnoticed.
-  cargo-audit:
-    name: Vulnerable crates (cargo audit)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
-        with:
-          tool: cargo-audit
-      # Warnings fail too: an unsound, unmaintained or yanked crate is a
-      # finding, not a footnote (RUSTSEC-2026-0486 passed as a warning).
-      - name: cargo audit
-        run: cargo audit --deny warnings
-  # The real-image checks: the base and toolchain layers build on the
-  # runner's daemon, the entrypoint runs, rootless podman starts inside the
-  # sandbox (ADR 0010) and a mounted CA lands in the bundle (ADR 0009).
+  # Known vulnerabilities and licences of every dependency, the image tools' pins included:
+  # osv-scanner decided by gates' osv_gate.py. What is accepted stands in osv-scanner.toml
+  # beside each lockfile.
+  vulns:
+    uses: paxel/gates/.github/workflows/vulns.yml@385f7ac316aef261a56e46bfc1e3553fa2efaccd # v1.4.0
+
+  rust:
+    uses: paxel/gates/.github/workflows/rust.yml@385f7ac316aef261a56e46bfc1e3553fa2efaccd # v1.4.0
+
+  # The real-image checks: the base and toolchain layers build on the runner's daemon, the
+  # entrypoint runs, rootless podman starts inside the sandbox (ADR 0010) and a mounted CA
+  # lands in the bundle (ADR 0009). The shared Rust gate has no Docker.
   integration:
-    needs: build-and-test
-    runs-on: ubuntu-latest
+    needs: rust
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Keep in sync with rust-toolchain.toml; toolchain bumps are deliberate, separate PRs.
+        with:
+          persist-credentials: false
+      # Keep in sync with rust-toolchain.toml; toolchain bumps are deliberate, separate commits.
       - uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0 branch
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: docker version && uname -r
       - run: sysctl kernel.apparmor_restrict_unprivileged_userns || true
-      - run: cargo test --test integration -- --ignored --test-threads=1 docker_toolchain ca_is
+      - run: cargo test --locked --test integration -- --ignored --test-threads=1 docker_toolchain ca_is
+
+  sonar:
+    needs: rust
+    uses: paxel/gates/.github/workflows/sonar.yml@385f7ac316aef261a56e46bfc1e3553fa2efaccd # v1.4.0
+    secrets:
+      sonar-token: ${{ secrets.SQ_TOKEN }}
