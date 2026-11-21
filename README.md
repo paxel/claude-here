@@ -93,8 +93,11 @@ installs fish completions and offers to add `.claude_here/` to your global git
 ignore. The first `claude_here` builds the `base` image locally (a few minutes).
 
 Every release archive and `install.sh` carry signed build provenance. Check a
-download with `gh attestation verify <file> --repo paxel/claude-here`; the
-bundle is also attached to the release as `claude_here-<version>.intoto.jsonl`.
+download with `gh attestation verify <file> --repo paxel/claude-here
+--signer-workflow paxel/gates/.github/workflows/provenance.yml --source-ref
+refs/tags/<version>`; the Sigstore bundle is also attached to the release as
+`claude_here-<version>-provenance.sigstore.json`, next to a CycloneDX SBOM of the
+source, `claude_here-<version>-source.cdx.json`.
 
 ### WSL
 
