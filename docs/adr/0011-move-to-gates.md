@@ -51,8 +51,10 @@ denial. `clippy::pedantic` stays on top of the set, with the six lints it allowe
 two `#[allow]` became `#[expect(..., reason)]`.
 
 **Coverage.** One part, `rust`, measured by the gate with `cargo tarpaulin --engine llvm`. The
-first floor is 80.17, the local measurement minus 0.1. The old floor, 80.46, came from
-tarpaulin's default engine, which counts lines differently; the tests did not change.
+first floor is 79.59, the measurement on the CI runner (79.69 %) minus 0.1; a workstation
+with Docker measures 80.27 %, because some tests take another branch there. The old floor,
+80.46, came from tarpaulin's default engine, which counts lines differently; the tests did
+not change. Raise the floor only from a measurement on the runner.
 
 **Fuzzing** runs weekly and by hand only, 900 seconds per target, as in the other
 repositories; it no longer runs on every pull request.
