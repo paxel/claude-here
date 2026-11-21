@@ -4,23 +4,13 @@
 version: 2
 updates:
   - package-ecosystem: "cargo"
-    directory: "/"
+    directories: ["/", "/fuzz"]
     schedule:
       interval: "weekly"
     cooldown:
       default-days: 14
     groups:
       cargo:
-        patterns: ["*"]
-  # The fuzz crate has its own lockfile.
-  - package-ecosystem: "cargo"
-    directory: "/fuzz"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 14
-    groups:
-      cargo-fuzz:
         patterns: ["*"]
   - package-ecosystem: "github-actions"
     directory: "/"
