@@ -32,7 +32,11 @@ out of stack detection; the OSV gate still scans their lockfiles, because a vuln
 tool ships into every sandbox. osv-scanner reads its exceptions beside the lockfile, so the
 three directories whose `requirements.txt` holds colorama carry an `osv-scanner.toml` of
 their own, as `fuzz/` does for `fuzz/Cargo.lock`. Those files are not embedded in the binary
-and change no image.
+and change no image. The licence allowlist was written for what a repository links or ships;
+claude-here ships only the pins, and pip installs the tools from PyPI on the user's machine.
+So the licences of the image tools outside the allowlist (azure-cli's LGPL dependencies,
+and those deps.dev cannot name) are accepted per package with that reason and a date,
+rather than taking the pins out of the scan.
 
 **Docker integration tests.** The image chain is the product, and only the integration tests
 build it on a real daemon, start the entrypoint, start rootless podman inside (ADR 0010) and
