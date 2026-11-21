@@ -1,0 +1,12 @@
+# osv-scanner's exceptions for fuzz/Cargo.lock: osv-scanner reads the file beside the
+# lockfile, so the fuzz crate cannot share the one at the repository root. The rules are the
+# same: a reason, a date, and the gate fails again when the date passes.
+
+[[PackageOverrides]]
+name = "libfuzzer-sys"
+ecosystem = "crates.io"
+license.ignore = true
+effectiveUntil = 2027-05-21
+reason = """NCSA AND (Apache-2.0 OR MIT): the NCSA part is LLVM's libFuzzer, a permissive licence \
+that is not on the standard's allowlist. libfuzzer-sys is linked only into the fuzz targets, \
+which run in CI and are never part of a release."""

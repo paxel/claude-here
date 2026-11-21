@@ -1,0 +1,10 @@
+# osv-scanner's exceptions for the pinned tools in this directory: osv-scanner reads the file
+# beside the lockfile. A reason and a date each; the gate fails again when the date passes.
+
+[[PackageOverrides]]
+name = "colorama"
+ecosystem = "PyPI"
+license.override = ["BSD-3-Clause"]
+effectiveUntil = 2027-05-21
+reason = """deps.dev reports colorama's licence as non-standard; its LICENSE.txt is the \
+3-clause BSD licence."""
