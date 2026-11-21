@@ -55,3 +55,214 @@ ignoreUntil = 2026-12-18
 reason = """Scorecard counts only pull requests merged with SAST; the first commits of the \
 repository were pushed directly. CodeQL and SonarQube Cloud run on every push and pull \
 request, and the finding clears once changes arrive through pull requests."""
+
+# SonarQube Cloud's findings in images/ that are by design, false alarms or style (ADR 0011).
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/claude.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/android.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/aws.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/azure.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/cpp.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/dart.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/docker.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/docs.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/gcloud.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/go.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/jvm.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/k8s.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/node.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/python.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/rust.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/terraform.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S6471"
+path = "images/toolchains/uv.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """The image ends as root by design: the entrypoint's root phase writes the git, cloud and \
+network modes to /etc/claude_here/, where the sandbox user cannot change them, and then drops \
+to that user before Claude starts (ADR 0002, ADR 0005)."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "docker:S8545"
+path = "images/toolchains/go.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """gopls is installed at the version pinned in GOPLS_VERSION; `go install pkg@version` builds \
+it with the go.sum of that release, so the dependencies are fixed by it."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "shell:S5332"
+path = "images/net-summary.sh"
+ignoreUntil = 2027-05-21
+reason = """A false alarm: the literal "http://" is the prefix the network summary prints in front of \
+each plain HTTP request it found in the capture; nothing is fetched over HTTP."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "shell:S7688"
+path = "images/cloud-shim.sh"
+ignoreUntil = 2027-05-21
+reason = """Style only: the script is bash and every [ test quotes its operands, so [[ would change \
+nothing in behaviour."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "shell:S7688"
+path = "images/entrypoint.sh"
+ignoreUntil = 2027-05-21
+reason = """Style only: the script is bash and every [ test quotes its operands, so [[ would change \
+nothing in behaviour."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "shell:S7688"
+path = "images/git-shim.sh"
+ignoreUntil = 2027-05-21
+reason = """Style only: the script is bash and every [ test quotes its operands, so [[ would change \
+nothing in behaviour."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "shell:S7688"
+path = "images/net-allowlist.sh"
+ignoreUntil = 2027-05-21
+reason = """Style only: the script is bash and every [ test quotes its operands, so [[ would change \
+nothing in behaviour."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "shell:S7688"
+path = "images/net-summary.sh"
+ignoreUntil = 2027-05-21
+reason = """Style only: the script is bash and every [ test quotes its operands, so [[ would change \
+nothing in behaviour."""

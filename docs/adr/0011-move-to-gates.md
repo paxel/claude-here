@@ -63,6 +63,15 @@ not change. Raise the floor only from a measurement on the runner.
 **Fuzzing** runs weekly and by hand only, 900 seconds per target, as in the other
 repositories; it no longer runs on every pull request.
 
+**SonarQube Cloud's findings in `images/`.** The first analysis of `summer` found the
+downloads of the image builds and of `install.sh` following redirects without restricting
+them to HTTPS, and most image downloads have no hash check. Every `curl` there now takes
+`--proto =https --tlsv1.2`, which rebuilds every image once. What stays is accepted per rule
+and file in `code-scanning-ignores.toml`: the images end as root because the entrypoint's root
+phase needs it before it drops to the sandbox user, `go install` at a pinned version, the
+literal `http://` the network summary prints, and `[` instead of `[[` in scripts that quote
+every operand.
+
 **Release files.** The archives, their `.sha256` files for `install.sh`, and `install.sh`
 itself are attested by gates' provenance workflow, which adds a CycloneDX SBOM of the source.
 All files of a release share the prefix `claude_here`, the one the archives already had. The
