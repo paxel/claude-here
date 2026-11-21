@@ -266,3 +266,143 @@ path = "images/net-summary.sh"
 ignoreUntil = 2027-05-21
 reason = """Style only: the script is bash and every [ test quotes its operands, so [[ would change \
 nothing in behaviour."""
+
+# Scorecard's Pinned-Dependencies on the images built from the local base image (here-1023):
+# claude_here builds base itself on the user's machine, so `FROM ${BASE}` has no registry
+# digest to pin. Debian under base is pinned by digest in images/Dockerfile.base.
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/claude.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/android.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/aws.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/azure.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/cpp.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/dart.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/docker.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/docs.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/gcloud.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/go.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/jvm.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/k8s.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/node.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/python.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/rust.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/terraform.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "PinnedDependenciesID"
+path = "images/toolchains/uv.dockerfile"
+ignoreUntil = 2027-05-21
+reason = """FROM ${BASE} names the local base image that claude_here builds on the user's \
+machine; there is no registry digest to pin it by. Its own FROM is pinned by digest."""
