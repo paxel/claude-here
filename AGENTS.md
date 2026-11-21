@@ -40,7 +40,7 @@ Prefix `here`, as in `here-1028`. See `docs/agents/ticket-ids.md`.
 
 ## Rules
 
-* `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` before every commit.
+* Before every commit: the checks under Quality gates below.
 * No `unwrap`/`expect` outside tests (denied by lints).
 * Keep `assemble()` pure; anything touching the filesystem or docker goes into `HostFacts::gather`, `prepare_host_dirs` or `execute`.
 * Changing anything under `images/` changes a layer hash and triggers a rebuild for users; mention it in the changelog.
@@ -49,5 +49,90 @@ Prefix `here`, as in `here-1028`. See `docs/agents/ticket-ids.md`.
 * `cargo test` reads `CLAUDE_CONFIG_DIR` in one init test; run it with that variable unset.
 * Image files use BuildKit cache mounts; a file with `RUN --mount` needs `# syntax=docker/dockerfile:1.7` on line 1, and `Docker::run_build` sets `DOCKER_BUILDKIT=1`.
 * Never `chown -R` a tree after filling it: own the directory first and write as the target user, otherwise the whole tree is copied into another layer. Tests enforce both rules.
-* Coverage ratchet: `quality.yml` fails under the coverage floor (`--fail-under`), which is the measured value minus 2. When coverage rises, raise the floor in the same PR; never lower it.
 * Commits: one-line summary, no trailers.
+
+## Quality gates
+
+The standard claude-here is held to is [paxel/gates](https://github.com/paxel/gates);
+`docs/adr/0011-move-to-gates.md` says where claude-here adds to it and why. The workflows
+call gates' shared workflows, pinned by commit; Dependabot moves the pin.
+
+### Before a commit
+
+`cargo fmt`, clippy and the tests, on the toolchain `rust-toolchain.toml` pins. Clippy is two
+runs, as in the shared Rust gate: the shipped code under the whole lint set, and the tests
+with the lints allowed that are how a test fails:
+
+```sh
+cargo clippy --locked --all-features -- -D warnings
+cargo clippy --locked --tests --benches --examples --all-features -- -D warnings \
+  -A clippy::unwrap_used -A clippy::expect_used -A clippy::panic -A clippy::indexing_slicing \
+  -A clippy::string_slice -A clippy::arithmetic_side_effects -A clippy::unreachable
+cargo test --locked --all-features
+```
+
+A change under `images/` also needs the Docker integration tests, which CI runs after the
+Rust gate:
+
+```sh
+cargo test --locked --test integration -- --ignored --test-threads=1 docker_toolchain ca_is
+```
+
+### Coverage ratchet
+
+Line coverage may only go up. The Rust gate in `ci.yml` fails under the floor in
+`coverage-floors.toml`. Every feature ships with tests that hold or raise coverage; a feature
+that lowers it is not done. When coverage rises, raise the floor and the badge in the same
+pull request, with gates checked out beside the repository:
+
+```sh
+cargo tarpaulin --engine llvm --locked --all-features --workspace \
+  --skip-clean --out Lcov --output-dir coverage && mv coverage/lcov.info coverage/rust.lcov
+python3 ../gates/scripts/coverage_ratchet.py --floors coverage-floors.toml
+```
+
+Never lower the floor.
+
+### Fuzzing
+
+`fuzz/` holds the targets `session_id`, `config_file`, `split_args` and `net_files`;
+`fuzz.yml` runs them weekly. `fuzz/Cargo.lock` is committed and has its own
+`fuzz/osv-scanner.toml`, because osv-scanner reads the exceptions beside the lockfile.
+
+### Before a release
+
+fmt, both clippy runs, the tests, the integration tests, osv-scanner with gates'
+`scripts/osv_gate.py` and the coverage ratchet. The version stands in `Cargo.toml` and
+`Cargo.lock`. The release workflow runs the shared release gate, the tests and the
+integration tests on the tagged commit before it builds.
+
+### Security rules
+
+The decisions behind these are in `docs/adr/0011-move-to-gates.md`.
+
+- Shipped code may not panic: `Cargo.toml` denies unwrap, expect, panic, todo,
+  unimplemented, unreachable, indexing, string slicing, overflowing arithmetic and `dbg!`
+  under `[lints.clippy]`. Tests are exempt through the second clippy run.
+- `unsafe` is forbidden. `#[allow(...)]` is denied: a lint that must be silenced gets
+  `#[expect(<lint>, reason = "...")]`.
+- Every action in `.github/workflows/` is pinned to a full commit SHA with its version in a
+  trailing comment. Never reference an action by tag or branch alone.
+- Rust is pinned in `rust-toolchain.toml`; the shared workflows read it from there. The
+  workflows' own jobs mirror it (`dtolnay/rust-toolchain@<sha> # <version> branch`). A
+  toolchain bump is a commit of its own that changes the file and those references together.
+- Every workflow starts with `permissions: contents: read`; a job that writes widens it
+  itself.
+- A dependency advisory is fixed by an update. When no fixed release exists, it is accepted
+  in the `osv-scanner.toml` beside the lockfile with the reason claude-here is not exposed and
+  an `ignoreUntil` date. A licence outside the allowlist is accepted per package with
+  `effectiveUntil`. Never ignore without reason and date.
+- A directory whose manifests are no stack (the image tools' pins) is listed in `gates.toml`
+  as `[[NotStacks]]` with its reason; the OSV gate still scans it.
+- A code-scanning alert or a SonarQube Cloud finding that stays open is accepted in
+  `code-scanning-ignores.toml` with its tool, rule, file, reason and an `ignoreUntil` date.
+  Nothing is dismissed in GitHub or marked in SonarQube Cloud.
+- The release fails on a known vulnerability, on every open code-scanning alert, secret alert
+  and SonarQube Cloud finding that is not accepted, and on a missing `CHANGELOG.md` section for
+  the version. The weekly Security run fails on the same, and on unmaintained dependencies and
+  passed dates.
+- `summer` takes pull requests only.
