@@ -22,7 +22,7 @@ esac
 target="${arch_part}-${os_part}"
 
 if [ -z "$version" ]; then
-  version="$(curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
+  version="$(curl -fsSL --proto '=https' --tlsv1.2 "https://api.github.com/repos/${repo}/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
 fi
 [ -n "$version" ] || { echo "could not determine latest version" >&2; exit 1; }
 
@@ -32,8 +32,8 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 echo "downloading ${url}"
-curl -fsSL -o "$tmp/$name.tar.gz" "$url"
-curl -fsSL -o "$tmp/$name.tar.gz.sha256" "$url.sha256"
+curl -fsSL --proto '=https' --tlsv1.2 -o "$tmp/$name.tar.gz" "$url"
+curl -fsSL --proto '=https' --tlsv1.2 -o "$tmp/$name.tar.gz.sha256" "$url.sha256"
 (cd "$tmp" && (shasum -a 256 -c "$name.tar.gz.sha256" >/dev/null 2>&1 || sha256sum -c "$name.tar.gz.sha256" >/dev/null))
 tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
 mkdir -p "$bin_dir"
